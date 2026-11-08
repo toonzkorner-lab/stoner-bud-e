@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   BookOpen,
+  Brain,
+  Check,
   ClipboardList,
+  Cookie,
   Ellipsis,
   LayoutGrid,
   Leaf,
@@ -10,9 +14,11 @@ import {
   Package,
   Pause,
   Scale,
+  Send,
   Settings,
   Timer,
   UserRound,
+  Wind,
 } from 'lucide-react';
 import {
   DEFAULT_SESSION,
@@ -26,7 +32,7 @@ import {
   parseClock,
   pickRandom,
 } from './bude';
-import type { ChatMessage, Experience, Method, Session } from './bude';
+import type { ChatMessage, Session } from './bude';
 import StrainsTab from './StrainsTab';
 import TonightTab from './TonightTab';
 import SettingsTab from './SettingsTab';
@@ -41,10 +47,11 @@ import type { JournalEntry } from './journal';
 import { STASH_KEY } from './stash';
 import type { StashItem } from './stash';
 import AuthTab from './AuthTab';
-import { queueDeletion, uploadLocal } from './lib/sync';
+import { clearLocalSyncState, queueDeletion, uploadLocal } from './lib/sync';
 import type { SyncSettings } from './lib/sync';
-import { getSession } from './lib/auth-client';
+import { deleteAccount, getSession, signOut } from './lib/auth-client';
 import type { AuthUser } from './lib/auth-client';
+import { Chip, ChipRow, Label, PageHead } from './bits';
 
 const TRANSCRIPT_KEY = 'bude-transcript-v1';
 const SESSION_KEY = 'bude-session-v1';
@@ -71,6 +78,9 @@ function apiUrl(): string {
 
 type Tab = 'tonight' | 'chat' | 'tools' | 'plan' | 'strains' | 'journal' | 'stash' | 'break' | 'dose' | 'settings' | 'account';
 type Source = 'live' | 'fallback' | null;
+
+/** Which tool is open inside the Tools tab (Grok drill-in). Null = the tool grid. */
+type ToolId = 'timer' | 'breathe' | 'munchies' | 'thoughts' | 'trivia';
 
 /** Live state of the edible timer, lifted to App so the header pill can show it. */
 interface TimerState {
@@ -178,6 +188,9 @@ export default function App() {
   const [source, setSource] = useState<Source>(null);
   const [timerStatus, setTimerStatus] = useState('No timer running yet.');
   const [timerState, setTimerState] = useState<TimerState>(IDLE_TIMER);
+  // Which tool is open in the Tools tab (null = the grid). Lifted to App so
+  // the header timer pill can open the timer tool directly (Grok behavior).
+  const [activeTool, setActiveTool] = useState<ToolId | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(
     typeof navigator === 'undefined' ? true : navigator.onLine,
@@ -339,6 +352,44 @@ export default function App() {
     }
   }
 
+  /**
+   * Delete the signed-in account (Settings → Legal → Delete my account).
+   * Server rows go first (api/account/delete); then the session cookie is
+   * dropped, the user is cleared (which also cancels any pending sync
+   * upload), and this device's account data is wiped — journal, stash,
+   * chat transcript, session, vibe, break, and all sync state. Theme and
+   * the age gate are device preferences, not account data, so they stay.
+   * Throws when the server delete fails, so the Settings screen can show
+   * the error and nothing is wiped.
+   */
+  async function handleAccountDeleted(): Promise<void> {
+    await deleteAccount();
+    try {
+      await signOut();
+    } catch {
+      // The session row is already gone — the cookie is dead either way.
+    }
+    setUser(null);
+    clearLocalSyncState();
+    try {
+      localStorage.removeItem(JOURNAL_KEY);
+      localStorage.removeItem(STASH_KEY);
+      localStorage.removeItem(TRANSCRIPT_KEY);
+      localStorage.removeItem(SESSION_KEY);
+      localStorage.removeItem(VIBE_KEY);
+      localStorage.removeItem(BREAK_KEY);
+    } catch {
+      // Storage blocked — the state reset below still clears the screen.
+    }
+    setJournal([]);
+    setStash([]);
+    setTranscript([]);
+    setSession(DEFAULT_SESSION);
+    setVibe(DEFAULT_VIBE);
+    setTab('tonight');
+    setSyncMessage('Your account is deleted. This device is back to fresh, signed-out Bud-E.');
+  }
+
   function askAboutStrain(name: string): void {
     setPendingQuestion(`Tell me about ${name} — what kind of high is it, and what should I know?`);
     setTab('chat');
@@ -408,7 +459,10 @@ export default function App() {
           <button
             type="button"
             className="timer-pill"
-            onClick={() => setTab('tools')}
+            onClick={() => {
+              setActiveTool('timer');
+              setTab('tools');
+            }}
             aria-label="Edible timer — open the timer tool"
           >
             <span className="timer-pill-row">
@@ -426,7 +480,7 @@ export default function App() {
           </button>
         )}
 
-        <div className="app-content">
+        <div className={tab === 'chat' ? 'app-content chat-active' : 'app-content'}>
           {!isOnline && (
             <p className="offline-banner" role="status">
               📶 You&apos;re offline — Bud-E&apos;s tools still work, but chat needs internet for
@@ -437,6 +491,7 @@ export default function App() {
       {tab === 'tonight' && (
         <TonightTab
           session={session}
+          setSession={setSession}
           vibe={vibe}
           timerStatus={timerStatus}
           onChat={() => setTab('chat')}
@@ -446,19 +501,34 @@ export default function App() {
       {tab === 'chat' && (
         <ChatTab
           session={session}
-          setSession={setSession}
           transcript={transcript}
           setTranscript={setTranscript}
           setSource={setSource}
           journalNote={journalSummary(journal)}
           prefill={pendingQuestion}
           onPrefillUsed={() => setPendingQuestion(null)}
+          onGoTonight={() => setTab('tonight')}
         />
       )}
       {tab === 'tools' && (
-        <ToolsTab session={session} vibe={vibe} setVibe={setVibe} setTimerStatus={setTimerStatus} onTimerState={setTimerState} />
+        <ToolsTab
+          session={session}
+          timerStatus={timerStatus}
+          setTimerStatus={setTimerStatus}
+          onTimerState={setTimerState}
+          activeTool={activeTool}
+          onToolChange={setActiveTool}
+        />
       )}
-      {tab === 'plan' && <PlanTab session={session} vibe={vibe} timerStatus={timerStatus} />}
+      {tab === 'plan' && (
+        <PlanTab
+          session={session}
+          vibe={vibe}
+          setVibe={setVibe}
+          timerStatus={timerStatus}
+          onGoTonight={() => setTab('tonight')}
+        />
+      )}
       {tab === 'strains' && <StrainsTab onAskAbout={askAboutStrain} />}
       {tab === 'journal' && (
         <JournalTab
@@ -485,21 +555,25 @@ export default function App() {
       )}
       {tab === 'break' && <BreakTab />}
       {tab === 'dose' && <DoseTab />}
-      {tab === 'settings' && <SettingsTab theme={theme} onTheme={setTheme} />}
+      {tab === 'settings' && (
+        <SettingsTab
+          theme={theme}
+          onTheme={setTheme}
+          user={user}
+          onDeleteAccount={handleAccountDeleted}
+        />
+      )}
       {tab === 'account' && (
         <AuthTab
           user={user}
           onAuthChange={handleAuthChange}
           onSyncNow={() => void syncNow('manual')}
           syncMessage={syncMessage}
+          nights={journal.length}
+          stocked={stash.filter((i) => i.amount > 0).length}
+          onGoSettings={() => setTab('settings')}
         />
       )}
-
-          <footer className="footer">
-            21+ only. Bud-E is a buddy, not a doctor. Start low, go slow. Never drive high.
-            <br />
-            If a pet eats edibles, call a vet right away.
-          </footer>
         </div>
 
         {moreOpen && (
@@ -627,117 +701,46 @@ function AgeGate({
 }
 
 // ---------------------------------------------------------------------------
-// Session panel (top of the Chat tab)
+// Chat tab — Grok Buddy layout: title + session pill, scrolling messages,
+// prompt chips + pinned composer. Session editing moved to Tonight.
 // ---------------------------------------------------------------------------
 
-function SessionPanel({
-  session,
-  setSession,
-}: {
-  session: Session;
-  setSession: (s: Session) => void;
-}) {
-  const update = <K extends keyof Session>(key: K, value: Session[K]) =>
-    setSession({ ...session, [key]: value });
-
-  return (
-    <section className="card" aria-label="Tonight's session">
-      <h2>🌙 Tonight&apos;s session</h2>
-      <p className="muted small">
-        Fill this in and Bud-E gives you real answers with your real numbers — not guesses.
-      </p>
-      <label htmlFor="method">What did you take?</label>
-      <select
-        id="method"
-        value={session.method}
-        onChange={(e) => {
-          const method = e.target.value as Method;
-          // Keep the unit sensible: flower is weighed in grams, the rest in mg.
-          setSession({ ...session, method, unit: method === 'flower' ? 'g' : 'mg' });
-        }}
-      >
-        {(Object.keys(METHOD_LABELS) as Method[]).map((m) => (
-          <option key={m} value={m}>
-            {METHOD_LABELS[m]}
-          </option>
-        ))}
-      </select>
-
-      <div className="field-row">
-        <div className="grow-2">
-          <label htmlFor="amount">How much?</label>
-          <input
-            id="amount"
-            type="number"
-            min="0"
-            step="0.5"
-            inputMode="decimal"
-            placeholder="10"
-            value={session.amount}
-            onChange={(e) => update('amount', e.target.value)}
-          />
-        </div>
-        <div>
-          <label htmlFor="unit">Unit</label>
-          <select id="unit" value={session.unit} onChange={(e) => update('unit', e.target.value as 'mg' | 'g')}>
-            <option value="mg">mg</option>
-            <option value="g">grams</option>
-          </select>
-        </div>
-      </div>
-
-      <label htmlFor="timeTaken">What time did you take it?</label>
-      <input
-        id="timeTaken"
-        type="time"
-        value={session.timeTaken}
-        onChange={(e) => update('timeTaken', e.target.value)}
-      />
-
-      <label htmlFor="experience">How experienced are you?</label>
-      <select
-        id="experience"
-        value={session.experience}
-        onChange={(e) => update('experience', e.target.value as Experience)}
-      >
-        <option value="new">New — just starting out</option>
-        <option value="some">Some experience</option>
-        <option value="experienced">Experienced — I know my dose</option>
-      </select>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Chat tab
-// ---------------------------------------------------------------------------
+const CHAT_PROMPTS = [
+  'When will this hit?',
+  'I feel too high',
+  'Can I take more?',
+  'What should I eat?',
+  'Can I drive?',
+  'What dose should I start with?',
+];
 
 function ChatTab({
   session,
-  setSession,
   transcript,
   setTranscript,
   setSource,
   journalNote,
   prefill,
   onPrefillUsed,
+  onGoTonight,
 }: {
   session: Session;
-  setSession: (s: Session) => void;
   transcript: ChatMessage[];
   setTranscript: (t: ChatMessage[]) => void;
   setSource: (s: Source) => void;
   journalNote: string;
   prefill: string | null;
   onPrefillUsed: () => void;
+  onGoTonight: () => void;
 }) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }, [transcript]);
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [transcript, sending]);
 
   // "Ask Bud-E about this strain" drops the question into the chat box.
   useEffect(() => {
@@ -747,10 +750,10 @@ function ChatTab({
     }
   }, [prefill, onPrefillUsed]);
 
-  async function send() {
-    const text = input.trim();
-    if (!text || sending) return;
-    const next: ChatMessage[] = [...transcript, { role: 'user', text }];
+  async function sendText(text: string): Promise<void> {
+    const trimmed = text.trim();
+    if (!trimmed || sending) return;
+    const next: ChatMessage[] = [...transcript, { role: 'user', text: trimmed }];
     setTranscript(next);
     setInput('');
     setSending(true);
@@ -799,159 +802,278 @@ function ChatTab({
       }
     } catch {
       // No key, no network, server hiccup — the offline buddy always answers.
-      setTranscript([...next, { role: 'bud', text: localReply(text, session, next) }]);
+      setTranscript([...next, { role: 'bud', text: localReply(trimmed, session, next) }]);
       setSource('fallback');
     } finally {
       setSending(false);
     }
   }
 
-  function clearChat() {
-    if (window.confirm('Clear the whole chat? This wipes the saved transcript.')) {
-      setTranscript([]);
-      setSource(null);
-    }
+  function send(): void {
+    void sendText(input);
   }
 
-  return (
-    <main>
-      <SessionPanel session={session} setSession={setSession} />
+  const amount = session.amount.trim();
+  const doseText = amount ? `${amount}${session.unit}` : '';
 
-      <section className="card" aria-label="Chat with Bud-E">
-        <h2>💬 Chat with Bud-E</h2>
-        <div className="chat-list">
-          {transcript.length === 0 && (
-            <p className="chat-empty">
-              Heyy! Tell me what you took tonight, or ask me anything — like &ldquo;when will this edible kick
-              in?&rdquo;
-            </p>
-          )}
-          {transcript.map((m, i) => (
-            <div key={i} className={m.role === 'user' ? 'msg user' : 'msg bud'}>
-              <span className="who">{m.role === 'user' ? 'You' : 'Bud-E'}</span>
-              {m.text}
-              {m.role === 'bud' && m.sources && m.sources.length > 0 && (
-                <span className="chat-sources">
-                  Sources:{' '}
-                  {m.sources.map((s, j) => (
-                    <span key={j}>
-                      {j > 0 ? ' · ' : ''}
-                      <a href={s.url} target="_blank" rel="noreferrer">
-                        {s.title}
-                      </a>
-                    </span>
-                  ))}
-                </span>
-              )}
-            </div>
-          ))}
-          {sending && (
-            <div className="msg bud">
-              <span className="who">Bud-E</span>thinking…
-            </div>
-          )}
-          <div ref={bottomRef} />
+  return (
+    <div className="chat-shell">
+      <div className="chat-scroll" role="log" aria-live="polite">
+        <div>
+          <h1 className="page-title">Buddy</h1>
+          <p className="page-sub" style={{ marginBottom: 0 }}>
+            Ask anything — Bud-E answers with your session in mind.
+          </p>
         </div>
 
-        <div className="chat-input-row">
+        <button type="button" className="chat-session-pill" onClick={onGoTonight}>
+          {amount !== '' ? (
+            <>
+              <span style={{ fontWeight: 700, textTransform: 'capitalize' }}>{doseText}</span>
+              <span className="muted"> · {METHOD_LABELS[session.method]} · edit</span>
+            </>
+          ) : (
+            <span className="muted">
+              No dose logged — tap to add one so answers use your numbers.
+            </span>
+          )}
+        </button>
+
+        {transcript.length === 0 && !sending && (
+          <div className="chat-empty-card">
+            <p style={{ margin: 0 }}>
+              Heyy! Tell me what you took tonight, or ask me anything — like “when will this edible
+              kick in?”
+            </p>
+          </div>
+        )}
+
+        {transcript.map((m, i) => (
+          <div key={i} className={m.role === 'user' ? 'msg user' : 'msg bud'}>
+            <span className="who">{m.role === 'user' ? 'You' : 'Bud-E'}</span>
+            {m.text}
+            {m.role === 'bud' && m.sources && m.sources.length > 0 && (
+              <span className="chat-sources">
+                Sources:{' '}
+                {m.sources.map((s, j) => (
+                  <span key={j}>
+                    {j > 0 ? ' · ' : ''}
+                    <a href={s.url} target="_blank" rel="noreferrer">
+                      {s.title}
+                    </a>
+                  </span>
+                ))}
+              </span>
+            )}
+          </div>
+        ))}
+        {sending && (
+          <div className="msg bud">
+            <span className="who">Bud-E</span>thinking…
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      <div className="chat-composer">
+        <div className="chat-prompts">
+          {CHAT_PROMPTS.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              className="chat-prompt"
+              disabled={sending}
+              onClick={() => void sendText(prompt)}
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+        <form
+          className="chat-input-row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            send();
+          }}
+        >
           <input
             type="text"
             value={input}
             placeholder="Ask Bud-E anything…"
             aria-label="Message Bud-E"
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void send();
-            }}
             disabled={sending}
           />
-          <button className="btn" onClick={() => void send()} disabled={sending || input.trim() === ''}>
-            Send
+          <button
+            type="submit"
+            className="btn chat-send"
+            disabled={sending || input.trim() === ''}
+            aria-label="Send"
+          >
+            <Send size={18} aria-hidden />
           </button>
+        </form>
+        <div className="chat-foot">
+          <span>21+ · Not a doctor · Never drive high</span>
+          {confirmClear ? (
+            <span style={{ display: 'flex', gap: 12 }}>
+              <button
+                type="button"
+                className="danger-text"
+                onClick={() => {
+                  setTranscript([]);
+                  setSource(null);
+                  setConfirmClear(false);
+                }}
+              >
+                Clear it
+              </button>
+              <button type="button" onClick={() => setConfirmClear(false)}>
+                Keep
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmClear(true)}
+              disabled={transcript.length === 0}
+            >
+              Clear chat
+            </button>
+          )}
         </div>
-
-        <p style={{ marginTop: 12, marginBottom: 0 }}>
-          <button className="btn ghost" onClick={clearChat}>
-            Clear chat
-          </button>
-        </p>
-      </section>
-
-      <p className="muted small">
-        Bud-E keeps your chat on this device only. Nothing you type here leaves your phone unless live AI is
-        on — and even then it&apos;s just the last few messages, no name attached.
-      </p>
-    </main>
+      </div>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
 // Tools tab
 // ---------------------------------------------------------------------------
+// Tools tab — Grok layout: a 2-col home grid of tiles; tapping one drills
+// into that tool with an "All tools" back button. The vibe check moved to
+// the Plan tab (Grok's VibeEditor).
+// ---------------------------------------------------------------------------
+
+const TOOL_DEFS: { id: ToolId; name: string; detail: string; icon: React.ReactNode }[] = [
+  { id: 'timer', name: 'Wait it out', detail: '', icon: <Timer size={20} aria-hidden /> },
+  {
+    id: 'breathe',
+    name: 'Breathing bubble',
+    detail: '4 in · 4 hold · 4 out',
+    icon: <Wind size={20} aria-hidden />,
+  },
+  {
+    id: 'munchies',
+    name: 'Munchies maker',
+    detail: 'Snack combos, shuffled',
+    icon: <Cookie size={20} aria-hidden />,
+  },
+  {
+    id: 'thoughts',
+    name: 'High-thought prompts',
+    detail: 'Talk it out',
+    icon: <Leaf size={20} aria-hidden />,
+  },
+  {
+    id: 'trivia',
+    name: 'Bud-E trivia',
+    detail: '5 questions, no judgment',
+    icon: <Brain size={20} aria-hidden />,
+  },
+];
 
 function ToolsTab({
   session,
-  vibe,
-  setVibe,
+  timerStatus,
   setTimerStatus,
   onTimerState,
+  activeTool,
+  onToolChange,
 }: {
   session: Session;
-  vibe: Vibe;
-  setVibe: (v: Vibe) => void;
+  timerStatus: string;
   setTimerStatus: (s: string) => void;
   onTimerState: (s: TimerState) => void;
+  activeTool: ToolId | null;
+  onToolChange: (t: ToolId | null) => void;
 }) {
+  if (activeTool === null) {
+    return (
+      <main>
+        <PageHead title="Tools" sub="Timer, breather, and other little helpers." />
+        <div className="tool-home">
+          {TOOL_DEFS.map((tool) => (
+            <button
+              key={tool.id}
+              type="button"
+              className="tool-tile"
+              onClick={() => onToolChange(tool.id)}
+            >
+              {tool.icon}
+              <span className="tool-tile-title">{tool.name}</span>
+              <span className="tool-tile-detail">
+                {tool.id === 'timer' ? timerStatus : tool.detail}
+              </span>
+            </button>
+          ))}
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <main className="tool-grid">
-      <VibeCheck vibe={vibe} setVibe={setVibe} />
-      <EdibleTimer session={session} setTimerStatus={setTimerStatus} onTimerState={onTimerState} />
-      <BreathingBubble />
-      <MunchiesMaker />
-      <HighThoughts />
-      <TriviaGame />
+    <main>
+      <button type="button" className="tool-back" onClick={() => onToolChange(null)}>
+        <ArrowLeft size={16} aria-hidden /> All tools
+      </button>
+      {activeTool === 'timer' && (
+        <EdibleTimer session={session} setTimerStatus={setTimerStatus} onTimerState={onTimerState} />
+      )}
+      {activeTool === 'breathe' && <BreathingBubble />}
+      {activeTool === 'munchies' && <MunchiesMaker />}
+      {activeTool === 'thoughts' && <HighThoughts />}
+      {activeTool === 'trivia' && <TriviaGame />}
     </main>
   );
 }
 
-function VibeCheck({ vibe, setVibe }: { vibe: Vibe; setVibe: (v: Vibe) => void }) {
-  const update = <K extends keyof Vibe>(key: K, value: Vibe[K]) => setVibe({ ...vibe, [key]: value });
-  const sentence = `Tonight: ${vibe.setting} vibes, ${vibe.sound} on, craving ${vibe.snack}, feeling ${vibe.energy}.`;
+// ---------------------------------------------------------------------------
+// Edible timer — same countdown logic, Grok's SVG countdown ring on top.
+// ---------------------------------------------------------------------------
+
+function CountdownRing({
+  remaining,
+  totalSec,
+  finished,
+}: {
+  remaining: number;
+  totalSec: number;
+  finished: boolean;
+}) {
+  const r = 86;
+  const c = 2 * Math.PI * r;
+  const progress = totalSec > 0 ? Math.min(1, (totalSec - remaining) / totalSec) : 0;
+  const offset = c * (1 - progress);
   return (
-    <section className="card" aria-label="Vibe check-in">
-      <h2>✨ Vibe check-in</h2>
-      <label htmlFor="setting">Where are you?</label>
-      <select id="setting" value={vibe.setting} onChange={(e) => update('setting', e.target.value)}>
-        <option value="couch">Couch</option>
-        <option value="outside">Outside</option>
-        <option value="friends">With friends</option>
-        <option value="solo">Solo</option>
-      </select>
-      <label htmlFor="sound">What&apos;s on?</label>
-      <select id="sound" value={vibe.sound} onChange={(e) => update('sound', e.target.value)}>
-        <option value="music">Music</option>
-        <option value="a show">A show</option>
-        <option value="quiet">Quiet</option>
-        <option value="a podcast">A podcast</option>
-      </select>
-      <label htmlFor="snack">Snack craving?</label>
-      <select id="snack" value={vibe.snack} onChange={(e) => update('snack', e.target.value)}>
-        <option value="something salty">Something salty</option>
-        <option value="something sweet">Something sweet</option>
-        <option value="something crunchy">Something crunchy</option>
-        <option value="something cold">Something cold</option>
-      </select>
-      <label htmlFor="energy">Energy right now?</label>
-      <select id="energy" value={vibe.energy} onChange={(e) => update('energy', e.target.value)}>
-        <option value="chill">Chill</option>
-        <option value="giggly">Giggly</option>
-        <option value="sleepy">Sleepy</option>
-        <option value="creative">Creative</option>
-      </select>
-      <p className="plan-sentence" style={{ marginTop: 14, marginBottom: 0 }}>
-        {sentence}
-      </p>
-    </section>
+    <div className={`countdown-ring-wrap${finished ? ' done' : ''}`} aria-hidden>
+      <svg viewBox="0 0 224 224">
+        <circle cx="112" cy="112" r={r} fill="none" strokeWidth="10" stroke="var(--line)" />
+        <circle
+          cx="112"
+          cy="112"
+          r={r}
+          fill="none"
+          strokeWidth="10"
+          stroke="var(--accent)"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={offset}
+          transform="rotate(-90 112 112)"
+        />
+      </svg>
+      <div className="countdown-ring-label">{formatCountdown(remaining)}</div>
+    </div>
   );
 }
 
@@ -1032,14 +1154,20 @@ function EdibleTimer({
     setTimerStatus(`Edible timer running — ${mins} minutes.`);
   }
 
+  const inhaled = session.method === 'flower' || session.method === 'vape' || session.method === 'dab';
+  const title = inhaled ? 'Wait 15 minutes' : 'Wait the full 2 hours';
+
   return (
     <section className="card" aria-label="Edible timer">
-      <h2>⏱️ Edible timer</h2>
+      <h2 className="tool-title">{title}</h2>
       <p className="muted">
         Edibles take 45–90 minutes to kick in. The golden rule: wait a full 2 hours before even thinking
         about more.
       </p>
-      <label htmlFor="waitMinutes">Minutes to wait</label>
+      <CountdownRing remaining={remaining} totalSec={totalSec} finished={finished} />
+      <label htmlFor="waitMinutes" style={{ marginTop: 16 }}>
+        Minutes to wait
+      </label>
       <input
         id="waitMinutes"
         type="number"
@@ -1049,23 +1177,24 @@ function EdibleTimer({
         value={minutesInput}
         onChange={(e) => setMinutesInput(Number(e.target.value))}
       />
-      <div className="button-row" style={{ marginTop: 12 }}>
-        <button className="btn" onClick={startManual} disabled={running}>
-          ▶ Start timer
-        </button>
-        <button className="btn secondary" onClick={startFromSession} disabled={running}>
-          🕐 From my session time
-        </button>
-      </div>
-      {(running || remaining > 0) && (
-        <>
-          <div className="timer-big">{formatCountdown(remaining)}</div>
-          <div className="button-row">
-            <button className="btn secondary" onClick={() => setRunning((r) => !r)}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+        {!running && !finished && (
+          <>
+            <button className="btn btn-block" onClick={startManual}>
+              ▶ Start timer
+            </button>
+            <button className="btn secondary btn-block" onClick={startFromSession}>
+              🕐 From my session time
+            </button>
+          </>
+        )}
+        {(running || remaining > 0) && (
+          <>
+            <button className="btn secondary btn-block" onClick={() => setRunning((r) => !r)}>
               {running ? '⏸ Pause' : '▶ Resume'}
             </button>
             <button
-              className="btn ghost"
+              className="btn ghost btn-block"
               onClick={() => {
                 setRunning(false);
                 setRemaining(0);
@@ -1076,9 +1205,9 @@ function EdibleTimer({
             >
               Reset
             </button>
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </div>
       {finished && (
         <p className="timer-done">
           ⏰ Time&apos;s up! Still feel nothing? Wait one more hour — do NOT redose yet. Edibles are sneaky
@@ -1104,8 +1233,8 @@ function BreathingBubble() {
   const scale = phaseIndex === 2 ? 0.8 : 1.25;
 
   return (
-    <section className="card" aria-label="Breathing bubble">
-      <h2>🫧 Breathing bubble</h2>
+    <section className="card" aria-label="Breathing bubble" style={{ textAlign: 'center' }}>
+      <h2 className="tool-title">Breathing bubble</h2>
       <p className="muted">Feeling a bit too high? Slow breaths help. 4 in, 4 hold, 4 out.</p>
       <div className="breath-wrap">
         <div
@@ -1115,9 +1244,11 @@ function BreathingBubble() {
         >
           {running ? phases[phaseIndex] : '🌿'}
         </div>
-        <div className="breath-phase">{running ? `4 seconds · ${phases[phaseIndex]}` : 'Tap start when ready'}</div>
+        <div className="breath-phase">
+          {running ? `4 seconds · ${phases[phaseIndex]}` : 'Tap start when ready'}
+        </div>
         <button
-          className="btn"
+          className="btn btn-block"
           onClick={() => {
             if (running) {
               setRunning(false);
@@ -1138,7 +1269,7 @@ function MunchiesMaker() {
   const [snack, setSnack] = useState(SNACK_COMBOS[0]);
   return (
     <section className="card" aria-label="Munchies maker">
-      <h2>🍿 Munchies maker</h2>
+      <h2 className="tool-title">Munchies maker</h2>
       <p className="result-box">{snack}</p>
       <button className="btn btn-block" onClick={() => setSnack(pickRandom(SNACK_COMBOS))}>
         🔀 Shuffle a snack
@@ -1151,7 +1282,7 @@ function HighThoughts() {
   const [thought, setThought] = useState(HIGH_THOUGHTS[0]);
   return (
     <section className="card" aria-label="High-thought prompts">
-      <h2>💭 High-thought prompts</h2>
+      <h2 className="tool-title">High-thought prompts</h2>
       <p className="result-box">{thought}</p>
       <button className="btn btn-block" onClick={() => setThought(pickRandom(HIGH_THOUGHTS))}>
         🔀 Next thought
@@ -1191,10 +1322,10 @@ function TriviaGame() {
 
   return (
     <section className="card" aria-label="Cannabis trivia">
-      <h2>🧠 Bud-E trivia</h2>
+      <h2 className="tool-title">Bud-E trivia</h2>
       {done ? (
         <>
-          <p className="score-big">
+          <p className="score-display">
             {score} / {TRIVIA.length}
           </p>
           <p style={{ textAlign: 'center' }}>
@@ -1242,10 +1373,6 @@ function TriviaGame() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// My Plan tab
-// ---------------------------------------------------------------------------
-
 function buildPlanText(session: Session, vibe: Vibe, timerStatus: string): string {
   const lines: string[] = [];
   lines.push('🌿 MY BUD-E PLAN FOR TONIGHT');
@@ -1275,11 +1402,15 @@ function buildPlanText(session: Session, vibe: Vibe, timerStatus: string): strin
 function PlanTab({
   session,
   vibe,
+  setVibe,
   timerStatus,
+  onGoTonight,
 }: {
   session: Session;
   vibe: Vibe;
+  setVibe: (v: Vibe) => void;
   timerStatus: string;
+  onGoTonight: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const planText = buildPlanText(session, vibe, timerStatus);
@@ -1298,33 +1429,146 @@ function PlanTab({
     window.setTimeout(() => setCopied(false), 2500);
   }
 
+  const amount = session.amount.trim();
+  const sessionLine =
+    `${METHOD_LABELS[session.method]}${amount ? ` — ${amount}${session.unit}` : ''}` +
+    (session.timeTaken ? ` at ${formatClock(parseClock(session.timeTaken) ?? 0)}` : '') +
+    ` (${session.experience === 'new' ? 'new' : session.experience === 'some' ? 'some experience' : 'experienced'})`;
+  const tips =
+    session.method === 'edible' || session.method === 'drink'
+      ? [
+          'Edibles: wait a full 2 hours before even thinking about more. Onset 45–90 min, peak 2–4 hrs, lasts 4–8 hrs.',
+          'Drink water. Have a snack ready for the munchies.',
+          'If it feels like too much: lie down, sip water, breathe slow. It passes.',
+        ]
+      : [
+          'Start low, go slow — one or two small hits, wait 15 minutes, then decide.',
+          'Drink water. Have a snack ready for the munchies.',
+          'If it feels like too much: lie down, sip water, breathe slow. It passes.',
+        ];
+
   return (
     <main>
-      <section className="card" aria-label="Tonight's plan">
-        <h2>📋 Tonight&apos;s plan</h2>
-        <p className="muted">
-          Built from your session up top and your vibe check-in. Copy it, share it with your sesh buddy, or
-          just keep it here.
-        </p>
-        <pre className="plan-text">{planText}</pre>
-        <div className="button-row" style={{ marginTop: 12 }}>
-          <button className="btn" onClick={() => void copyPlan()}>
-            {copied ? '✅ Copied!' : '📋 Copy my plan'}
+      <PageHead title="Plan" sub="Built from what you actually logged. Copy it for the group chat." />
+
+      {amount === '' ? (
+        <section className="card" aria-label="No session logged">
+          <p className="eyebrow">No session logged</p>
+          <p style={{ margin: '8px 0 0' }}>
+            Log tonight&apos;s dose on the Tonight tab and your plan will show up here — with the right
+            timings and tips for it.
+          </p>
+          <button className="btn" style={{ marginTop: 16 }} onClick={onGoTonight}>
+            Log tonight
           </button>
-        </div>
-        <textarea
-          ref={textRef}
-          readOnly
-          value={planText}
-          aria-label="Plan text (selectable fallback)"
-          style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
-          tabIndex={-1}
-        />
-      </section>
+        </section>
+      ) : (
+        <section className="card" aria-label="For tonight">
+          <p className="eyebrow">For tonight</p>
+          <dl style={{ margin: '12px 0 0', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <dt className="muted small" style={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Session
+              </dt>
+              <dd style={{ margin: '4px 0 0', textTransform: 'capitalize' }}>{sessionLine}</dd>
+            </div>
+            <div>
+              <dt className="muted small" style={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Vibe
+              </dt>
+              <dd style={{ margin: '4px 0 0', textTransform: 'capitalize' }}>
+                {vibe.setting} · {vibe.sound} · craving {vibe.snack} · feeling {vibe.energy}
+              </dd>
+            </div>
+            <div>
+              <dt className="muted small" style={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Timer
+              </dt>
+              <dd style={{ margin: '4px 0 0' }}>{timerStatus}</dd>
+            </div>
+          </dl>
+          <ul
+            style={{
+              margin: '16px 0 0',
+              padding: '16px 0 0',
+              borderTop: '1px solid var(--line)',
+              listStyle: 'none',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+            }}
+          >
+            {tips.map((tip) => (
+              <li key={tip} style={{ display: 'flex', gap: 8 }}>
+                <span aria-hidden>·</span>
+                <span>{tip}</span>
+              </li>
+            ))}
+          </ul>
+          <button className="btn btn-block" style={{ marginTop: 16 }} onClick={() => void copyPlan()}>
+            {copied ? (
+              <>
+                <Check size={16} aria-hidden /> Copied!
+              </>
+            ) : (
+              '📋 Copy my plan'
+            )}
+          </button>
+          <textarea
+            ref={textRef}
+            readOnly
+            value={planText}
+            aria-label="Plan text (selectable fallback)"
+            style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
+            tabIndex={-1}
+          />
+        </section>
+      )}
+
+      <VibeEditor vibe={vibe} setVibe={setVibe} />
+
       <p className="muted small">
-        21+ only. Bud-E is a buddy, not a doctor. Start low, go slow. Never drive high. If a pet eats
-        edibles, call a vet right away.
+        21+ only. Bud-E is a buddy, not a doctor. Start low, go slow. Never drive high — wait until fully
+        sober, and after edibles, until after a full night&apos;s sleep.
       </p>
     </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Vibe editor — Grok's VibeEditor: chips for setting, sound, snack, energy.
+// (Lives on the Plan tab; same options and values as the old select version.)
+// ---------------------------------------------------------------------------
+
+const VIBE_OPTIONS: { key: keyof Vibe; label: string; options: string[] }[] = [
+  { key: 'setting', label: 'Setting', options: ['Home', 'Porch / yard', "Friend's spot", 'Outside'] },
+  { key: 'sound', label: 'Sound', options: ['Music', 'TV / movie', 'Quiet', 'A podcast'] },
+  { key: 'snack', label: 'Snack', options: ['Chips', 'Something sweet', 'Fruit', 'Cooking it up'] },
+  { key: 'energy', label: 'Energy', options: ['Chill', 'Giggly', 'Chatty', 'Sleepy'] },
+];
+
+function VibeEditor({ vibe, setVibe }: { vibe: Vibe; setVibe: (v: Vibe) => void }) {
+  return (
+    <section className="card" aria-label="Vibe check">
+      <h2>Vibe check</h2>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {VIBE_OPTIONS.map((group) => (
+          <div key={group.key}>
+            <Label>{group.label}</Label>
+            <ChipRow>
+              {group.options.map((opt) => (
+                <Chip
+                  key={opt}
+                  on={vibe[group.key] === opt}
+                  onClick={() => setVibe({ ...vibe, [group.key]: opt })}
+                >
+                  {opt}
+                </Chip>
+              ))}
+            </ChipRow>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

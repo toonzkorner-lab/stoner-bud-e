@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 import { newStashId } from './stash';
 import type { StashForm, StashItem } from './stash';
+import { Chip, ChipRow, Label, PageHead } from './bits';
 
 const FORM_LABELS: Record<StashForm, string> = {
   flower: 'Flower',
@@ -21,6 +22,7 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+// Grok jar card: name + big amount on top, stepper row below, Save / Delete.
 function StashRow(props: {
   item: StashItem;
   onUpdate: (item: StashItem) => void;
@@ -28,6 +30,7 @@ function StashRow(props: {
 }) {
   const { item, onUpdate, onDelete } = props;
   const [draft, setDraft] = useState(String(item.amount));
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // If the amount changes somewhere else (like a journal entry taking
   // some out), refresh what the input shows.
@@ -47,67 +50,78 @@ function StashRow(props: {
     onUpdate({ ...item, amount: round2(n) });
   }
 
-  function deleteItem(): void {
-    if (window.confirm(`Delete ${item.name} from your stash?`)) onDelete(item.id);
-  }
-
   const runningLow = item.amount <= item.lowAt;
-  // Jar fill is a visual cue only: empty, low, or comfortably full.
-  const fillPct = item.amount <= 0 ? 0 : runningLow ? 22 : 65;
 
   return (
-    <div className="jar-wrap">
-      <div className="jar">
-        <div className="jar-lid" aria-hidden />
-        <div className="jar-body">
-          <div className="jar-fill" style={{ height: `${fillPct}%` }} aria-hidden />
-          <div className="jar-label">
-            <strong>{item.name}</strong>
-            <span className="muted small">{FORM_LABELS[item.form]}</span>
-            <span className="jar-amount">
-              {item.amount}
-              {item.unit}
-            </span>
-            {item.thcPct.trim() !== '' && <span className="muted small">{item.thcPct.trim()}% THC</span>}
-            {runningLow && <span>⚠️ Running low!</span>}
-          </div>
+    <article className="jar-card" aria-label={item.name}>
+      <div className="jar-card-head">
+        <div>
+          <p className="jar-card-name">{item.name}</p>
+          <p className="jar-card-sub">
+            {FORM_LABELS[item.form]}
+            {item.thcPct.trim() !== '' && ` · ${item.thcPct.trim()}% THC`}
+            {item.lowAt > 0 && ` · warns under ${item.lowAt}${item.unit}`}
+          </p>
         </div>
-      </div>
-      {item.lowAt > 0 && (
-        <p className="muted small" style={{ margin: '6px 0 0', textAlign: 'center' }}>
-          Warns under {item.lowAt}
+        <p className="jar-card-amount">
+          {item.amount}
           {item.unit}
         </p>
-      )}
-      <div className="jar-controls">
-        <div className="field-row">
-          <button type="button" className="jar-step" aria-label={`Take ${step}${item.unit} out of ${item.name}`} onClick={() => bump(-step)}>
-            −
-          </button>
-          <input
-            type="text"
-            inputMode="decimal"
-            aria-label={`Amount of ${item.name}`}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          <button type="button" className="jar-step" aria-label={`Add ${step}${item.unit} to ${item.name}`} onClick={() => bump(step)}>
-            +
-          </button>
-        </div>
-        <div className="button-row" style={{ marginTop: 8 }}>
-          <button type="button" className="btn secondary" onClick={saveDraft}>
-            Save
-          </button>
-          <button type="button" className="btn danger" onClick={deleteItem}>
-            Delete
-          </button>
-        </div>
       </div>
-    </div>
+      {runningLow && <p style={{ margin: '8px 0 0' }}>⚠️ Running low!</p>}
+      <div className="jar-stepper">
+        <button
+          type="button"
+          className="jar-step-btn"
+          aria-label={`Take ${step}${item.unit} out of ${item.name}`}
+          onClick={() => bump(-step)}
+          disabled={item.amount <= 0}
+        >
+          −
+        </button>
+        <input
+          type="text"
+          inputMode="decimal"
+          aria-label={`Amount of ${item.name}`}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <button
+          type="button"
+          className="jar-step-btn"
+          aria-label={`Add ${step}${item.unit} to ${item.name}`}
+          onClick={() => bump(step)}
+        >
+          +
+        </button>
+        <button
+          type="button"
+          className="jar-step-btn accent"
+          aria-label={`Save amount of ${item.name}`}
+          onClick={saveDraft}
+        >
+          ✓
+        </button>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        {confirmDelete ? (
+          <div className="button-row">
+            <button type="button" className="btn danger sm" onClick={() => onDelete(item.id)}>
+              Delete this jar
+            </button>
+            <button type="button" className="btn ghost sm" onClick={() => setConfirmDelete(false)}>
+              Keep it
+            </button>
+          </div>
+        ) : (
+          <button type="button" className="btn ghost sm" onClick={() => setConfirmDelete(true)}>
+            Delete jar
+          </button>
+        )}
+      </div>
+    </article>
   );
 }
-
 export default function StashTab(props: {
   items: StashItem[];
   onChange: (items: StashItem[]) => void;
@@ -162,12 +176,10 @@ export default function StashTab(props: {
   }
 
   return (
-    <div>
-      <div className="card">
+    <main>
+      <PageHead title="Stash" sub="What's on hand. Just for you — it stays on this device." />
+      <section className="card" aria-label="Add to stash">
         <h2>Add to stash</h2>
-        <p className="muted small">
-          What you have on hand. Just for you — it stays on this device.
-        </p>
 
         <label htmlFor="stash-name">Name / strain</label>
         <input
@@ -178,20 +190,18 @@ export default function StashTab(props: {
           onChange={(e) => setName(e.target.value)}
         />
 
-        <label htmlFor="stash-form">What kind</label>
-        <select
-          id="stash-form"
-          value={form}
-          onChange={(e) => setForm(e.target.value as StashForm)}
-        >
-          {(Object.keys(FORM_LABELS) as StashForm[]).map((f) => (
-            <option key={f} value={f}>
-              {FORM_LABELS[f]}
-            </option>
-          ))}
-        </select>
+        <div style={{ marginTop: 20 }}>
+          <Label>What kind</Label>
+          <ChipRow>
+            {(Object.keys(FORM_LABELS) as StashForm[]).map((f) => (
+              <Chip key={f} on={form === f} onClick={() => setForm(f)}>
+                {FORM_LABELS[f]}
+              </Chip>
+            ))}
+          </ChipRow>
+        </div>
 
-        <div className="field-row">
+        <div className="field-row" style={{ marginTop: 20 }}>
           <div className="grow-2">
             <label htmlFor="stash-amount">How much</label>
             <input
@@ -204,20 +214,26 @@ export default function StashTab(props: {
             />
           </div>
           <div>
-            <label htmlFor="stash-unit">Unit</label>
-            <select
-              id="stash-unit"
-              value={unit}
-              onChange={(e) => setUnit(e.target.value as StashUnit)}
-            >
-              <option value="g">g</option>
-              <option value="mg">mg</option>
-              <option value="pieces">pieces</option>
-            </select>
+            <Label>Unit</Label>
+            <div className="unit-toggle">
+              {(['g', 'mg', 'pieces'] as const).map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  aria-pressed={unit === u}
+                  className={unit === u ? 'on' : ''}
+                  onClick={() => setUnit(u)}
+                >
+                  {u}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
-        <label htmlFor="stash-thc">THC % (optional)</label>
+        <label htmlFor="stash-thc" style={{ marginTop: 20 }}>
+          THC % (optional)
+        </label>
         <input
           id="stash-thc"
           type="text"
@@ -244,29 +260,18 @@ export default function StashTab(props: {
             Add to stash
           </button>
         </p>
-      </div>
+      </section>
 
-      <div className="card">
-        <h2>Your stash</h2>
-        <p className="muted small">Jars on the shelf — same stash, same amounts, just easier to see.</p>
+      <section aria-label="Your stash">
+        <h2 style={{ marginBottom: 12 }}>Your stash</h2>
         {items.length === 0 ? (
           <p className="muted">Nothing in the stash yet. Add your first item above.</p>
         ) : (
-          <>
-            <div className="jar-shelf">
-              {items.map((item) => (
-                <StashRow
-                  key={item.id}
-                  item={item}
-                  onUpdate={updateItem}
-                  onDelete={deleteItem}
-                />
-              ))}
-            </div>
-            <div className="jar-shelf-board" aria-hidden />
-          </>
+          items.map((item) => (
+            <StashRow key={item.id} item={item} onUpdate={updateItem} onDelete={deleteItem} />
+          ))
         )}
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
