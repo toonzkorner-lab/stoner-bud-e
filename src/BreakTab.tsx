@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactElement } from 'react';
+import { Chip, ChipRow, Label, PageHead } from './bits';
 
 // Tolerance Break Tracker — everything stays on this device in localStorage.
 // Plain words, 21+, harm reduction. No medical advice, no diagnosis.
@@ -215,9 +216,13 @@ export default function BreakTab(): ReactElement {
   // -- Finished or ended break -------------------------------------------------
   if (breakRecord !== null && (breakRecord.status === 'done' || breakRecord.status === 'ended')) {
     return (
-      <div>
+      <main>
+        <PageHead
+          title="Break"
+          sub="A few days off helps a little — a week or two resets things a lot more."
+        />
         <div className="card">
-          <h2>{breakRecord.status === 'done' ? '🎉 Break complete!' : 'Break ended'}</h2>
+          <h2>{breakRecord.status === 'done' ? 'Break complete!' : 'Break ended'}</h2>
           <p>
             {breakRecord.status === 'done'
               ? `You did all ${breakRecord.lengthDays} days — from ${prettyDate(breakRecord.startDate)}. That takes real willpower.`
@@ -234,16 +239,20 @@ export default function BreakTab(): ReactElement {
         <button type="button" className="btn btn-block" onClick={clearBreak}>
           Start a new break
         </button>
-      </div>
+      </main>
     );
   }
 
   // -- Break just hit day zero (still marked active) ---------------------------
   if (isComplete && breakRecord !== null) {
     return (
-      <div>
+      <main>
+        <PageHead
+          title="Break"
+          sub="A few days off helps a little — a week or two resets things a lot more."
+        />
         <div className="card">
-          <h2>🎉 Break complete!</h2>
+          <h2>Break complete!</h2>
           <p className="score-big">
             {breakRecord.lengthDays} / {breakRecord.lengthDays} days
           </p>
@@ -258,16 +267,20 @@ export default function BreakTab(): ReactElement {
         <button type="button" className="btn btn-block" onClick={markDone}>
           Done — clear this break
         </button>
-      </div>
+      </main>
     );
   }
 
   // -- Active break ------------------------------------------------------------
   if (isActive && breakRecord !== null) {
     return (
-      <div>
+      <main>
+        <PageHead
+          title="Break"
+          sub="A few days off helps a little — a week or two resets things a lot more."
+        />
         <div className="card">
-          <h2>🌿 Your break</h2>
+          <h2>Your break</h2>
           <p className="timer-big">
             {daysRemaining} day{daysRemaining === 1 ? '' : 's'} to go
           </p>
@@ -291,32 +304,23 @@ export default function BreakTab(): ReactElement {
               You already checked in today — you can change anything below and save again.
             </p>
           )}
-          <label htmlFor="break-mood">How are you feeling today?</label>
-          <select
-            id="break-mood"
-            value={mood}
-            onChange={(e) => setMood(e.target.value)}
-          >
+          <Label>How are you feeling today?</Label>
+          <ChipRow>
             {MOODS.map((m) => (
-              <option key={m} value={m}>
+              <Chip key={m} on={mood === m} onClick={() => setMood(m)}>
                 {m}
-              </option>
+              </Chip>
             ))}
-          </select>
+          </ChipRow>
 
-          <label>Cravings (1 = barely there, 5 = really strong)</label>
-          <div className="button-row">
+          <Label>Cravings (1 = barely there, 5 = really strong)</Label>
+          <ChipRow>
             {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={n}
-                type="button"
-                className={cravings === n ? 'btn' : 'btn secondary'}
-                onClick={() => setCravings(n)}
-              >
+              <Chip key={n} on={cravings === n} onClick={() => setCravings(n)}>
                 {n}
-              </button>
+              </Chip>
             ))}
-          </div>
+          </ChipRow>
 
           <label htmlFor="break-note">Note (optional)</label>
           <textarea
@@ -326,8 +330,8 @@ export default function BreakTab(): ReactElement {
             placeholder="Anything on your mind? What helped today?"
           />
 
-          <div className="button-row">
-            <button type="button" className="btn" onClick={saveCheckin}>
+          <div>
+            <button type="button" className="btn btn-block" onClick={saveCheckin}>
               {todaysCheckin ? 'Update check-in' : 'Save check-in'}
             </button>
           </div>
@@ -355,15 +359,19 @@ export default function BreakTab(): ReactElement {
         <p className="muted small">
           Ending early is fine — any break helps. You&apos;ll still get the coming-back tips.
         </p>
-      </div>
+      </main>
     );
   }
 
   // -- No break yet: start one -------------------------------------------------
   return (
-    <div>
+    <main>
+      <PageHead
+        title="Break"
+        sub="A few days off helps a little — a week or two resets things a lot more."
+      />
       <div className="card">
-        <h2>🌿 Take a tolerance break</h2>
+        <h2>Take a tolerance break</h2>
         <p>
           Same amount, less magic? That&apos;s tolerance. Even a few days off helps a little — a
           week or two resets things a lot more. Pick a length and Bud-E will keep count for you.
@@ -371,24 +379,21 @@ export default function BreakTab(): ReactElement {
         <p className="muted small">
           Everything is saved only on this device. No account, no sharing.
         </p>
-        <label>How long?</label>
-        <div className="button-row">
+        <Label>How long?</Label>
+        <ChipRow>
           {LENGTH_CHOICES.map((days) => (
-            <button
+            <Chip
               key={days}
-              type="button"
-              className={
-                lengthDays === days && customDays.trim() === '' ? 'btn' : 'btn secondary'
-              }
+              on={lengthDays === days && customDays.trim() === ''}
               onClick={() => {
                 setLengthDays(days);
                 setCustomDays('');
               }}
             >
               {days} days
-            </button>
+            </Chip>
           ))}
-        </div>
+        </ChipRow>
         <label htmlFor="break-custom">Or a custom number of days (1–90)</label>
         <div className="field-row">
           <input
@@ -402,7 +407,7 @@ export default function BreakTab(): ReactElement {
             placeholder="e.g. 10"
           />
         </div>
-        <div className="button-row">
+        <div>
           <button type="button" className="btn btn-block" onClick={startBreak}>
             Start my break
           </button>
@@ -420,6 +425,6 @@ export default function BreakTab(): ReactElement {
           can&apos;t diagnose anything.
         </p>
       </div>
-    </div>
+    </main>
   );
 }

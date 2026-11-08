@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ReactElement } from 'react';
+import { Chip, ChipRow, Label, PageHead } from './bits';
 
 // Dose Helper — a plain-words starting-dose calculator. No storage, no
 // network, no medical advice. Hard caps: never suggest more than 10 mg as
@@ -112,40 +113,33 @@ export default function DoseTab(): ReactElement {
   }
 
   return (
-    <div>
+    <main>
+      <PageHead
+        title="Dose helper"
+        sub="Pick what you've got and how experienced you are — Bud-E suggests a safe place to start."
+      />
       <div className="card">
-        <h2>⚖️ Dose Helper</h2>
-        <p>
-          Not sure how much to take? Pick what you&apos;ve got and how experienced you are, and
-          Bud-E will suggest a safe place to start. Golden rule: start low, go slow — you can
-          always take more, you can&apos;t take less.
+        <p className="muted" style={{ marginTop: 0 }}>
+          Golden rule: start low, go slow — you can always take more, you can&apos;t take less.
         </p>
 
-        <label htmlFor="dose-experience">How experienced are you?</label>
-        <select
-          id="dose-experience"
-          value={experience}
-          onChange={(e) => setExperience(e.target.value as Experience)}
-        >
+        <Label>How experienced are you?</Label>
+        <ChipRow>
           {(Object.keys(EXPERIENCE_LABELS) as Experience[]).map((key) => (
-            <option key={key} value={key}>
+            <Chip key={key} on={experience === key} onClick={() => setExperience(key)}>
               {EXPERIENCE_LABELS[key]}
-            </option>
+            </Chip>
           ))}
-        </select>
+        </ChipRow>
 
-        <label htmlFor="dose-product">What are you taking?</label>
-        <select
-          id="dose-product"
-          value={product}
-          onChange={(e) => setProduct(e.target.value as Product)}
-        >
+        <Label>What are you taking?</Label>
+        <ChipRow>
           {(Object.keys(PRODUCT_LABELS) as Product[]).map((key) => (
-            <option key={key} value={key}>
+            <Chip key={key} on={product === key} onClick={() => setProduct(key)}>
               {PRODUCT_LABELS[key]}
-            </option>
+            </Chip>
           ))}
-        </select>
+        </ChipRow>
 
         {product !== 'dab' && (
           <>
@@ -201,6 +195,6 @@ export default function DoseTab(): ReactElement {
           talk to a real doctor. And never drive while high.
         </p>
       </div>
-    </div>
+    </main>
   );
 }

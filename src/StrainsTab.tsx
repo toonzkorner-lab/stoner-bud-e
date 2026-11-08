@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { EFFECT_NAMES, STRAINS, TERPENE_NAMES } from './data/strains';
 import type { Strain, StrainType } from './data/strains';
+import { Chip, ChipRow, Label, PageHead } from './bits';
 
 const FAVS_KEY = 'bude-strain-favs-v1';
 
@@ -73,12 +74,10 @@ function StrainCard({
 }) {
   return (
     <article className="card" aria-label={strain.name}>
-      <h2>
-        {strain.name}{' '}
-        <span className="small muted">
-          {TYPE_LABELS[strain.type]} · {typeHint(strain.type)}
-        </span>
-      </h2>
+      <h2 className="strain-name">{strain.name}</h2>
+      <p className="muted small" style={{ marginTop: 4 }}>
+        {TYPE_LABELS[strain.type]} · {typeHint(strain.type)}
+      </p>
       <p className="muted small">
         THC about {strain.thcMin}–{strain.thcMax}% · From {strain.lineage}
       </p>
@@ -105,7 +104,7 @@ function StrainCard({
               style={{
                 height: 8,
                 borderRadius: 999,
-                background: '#1a2e1a',
+                background: 'var(--line)',
                 marginTop: 3,
                 overflow: 'hidden',
               }}
@@ -114,7 +113,7 @@ function StrainCard({
                 style={{
                   height: '100%',
                   width: `${(effect.level / 5) * 100}%`,
-                  background: '#8fd14f',
+                  background: 'var(--accent)',
                   borderRadius: 999,
                 }}
               />
@@ -131,23 +130,19 @@ function StrainCard({
         ))}
       </div>
 
-      <div className="button-row" style={{ marginTop: 12 }}>
-        <button
-          className={isFav ? 'btn secondary' : 'btn ghost'}
-          onClick={onToggleFav}
-          aria-pressed={isFav}
-        >
+      <ChipRow style={{ marginTop: 12 }}>
+        <Chip on={isFav} onClick={onToggleFav} ariaPressed={isFav}>
           {isFav ? '★ Saved' : '☆ Save'}
-        </button>
-        <button
-          className={inCompare ? 'btn secondary' : 'btn ghost'}
+        </Chip>
+        <Chip
+          on={inCompare}
           onClick={onToggleCompare}
           disabled={compareDisabled}
-          aria-pressed={inCompare}
+          ariaPressed={inCompare}
         >
           {inCompare ? '✓ Comparing' : '⇄ Compare'}
-        </button>
-      </div>
+        </Chip>
+      </ChipRow>
       <p style={{ marginTop: 12, marginBottom: 0 }}>
         <button className="btn btn-block" onClick={() => onAskAbout(strain.name)}>
           💬 Ask Bud-E about {strain.name}
@@ -221,12 +216,14 @@ export default function StrainsTab({ onAskAbout }: { onAskAbout: (strainName: st
 
   return (
     <main>
-      <section className="card" aria-label="Strain guide intro">
-        <h2>🌿 Strain Guide</h2>
-        <p className="muted">
-          12 classics, plain and simple — what they taste like, how they tend to feel, and what is in
-          them. THC numbers are typical ranges; every batch is a little different. Start low, go slow,
-          and remember: this is general info, not medical advice.
+      <PageHead
+        title="Strains"
+        sub="12 classics, plain and simple — what they taste like, how they tend to feel, and what is in them."
+      />
+      <section className="card" aria-label="Strain guide filters">
+        <p className="muted" style={{ marginTop: 0 }}>
+          THC numbers are typical ranges; every batch is a little different. Start low, go slow, and
+          remember: this is general info, not medical advice.
         </p>
         <label htmlFor="strainSearch">Search strains</label>
         <input
@@ -237,23 +234,23 @@ export default function StrainsTab({ onAskAbout }: { onAskAbout: (strainName: st
           onChange={(e) => setQuery(e.target.value)}
         />
 
-        <p className="small" style={{ marginTop: 14, marginBottom: 6 }}>
-          <strong>Type</strong>
-        </p>
-        <div className="button-row">
-          {(['all', 'indica', 'sativa', 'hybrid'] as const).map((t) => (
-            <button
-              key={t}
-              className={typeFilter === t ? 'btn secondary' : 'btn ghost'}
-              onClick={() => setTypeFilter(t)}
-              aria-pressed={typeFilter === t}
-            >
-              {t === 'all' ? 'All' : TYPE_LABELS[t]}
-            </button>
-          ))}
+        <div style={{ marginTop: 20 }}>
+          <Label>Type</Label>
+          <ChipRow>
+            {(['all', 'indica', 'sativa', 'hybrid'] as const).map((t) => (
+              <Chip
+                key={t}
+                on={typeFilter === t}
+                onClick={() => setTypeFilter(t)}
+                ariaPressed={typeFilter === t}
+              >
+                {t === 'all' ? 'All' : TYPE_LABELS[t]}
+              </Chip>
+            ))}
+          </ChipRow>
         </div>
 
-        <div className="field-row" style={{ marginTop: 12 }}>
+        <div className="field-row" style={{ marginTop: 20 }}>
           <div>
             <label htmlFor="effectFilter">Feeling</label>
             <select
@@ -286,39 +283,33 @@ export default function StrainsTab({ onAskAbout }: { onAskAbout: (strainName: st
           </div>
         </div>
 
-        <p className="small" style={{ marginTop: 14, marginBottom: 6 }}>
-          <strong>What is the vibe tonight?</strong>
-        </p>
-        <div className="button-row">
-          {MOODS.map((m) => (
-            <button
-              key={m}
-              className={mood === m ? 'btn secondary' : 'btn ghost'}
-              onClick={() => setMood(mood === m ? null : m)}
-              aria-pressed={mood === m}
-            >
-              {MOOD_LABELS[m]}
-            </button>
-          ))}
+        <div style={{ marginTop: 20 }}>
+          <Label>What is the vibe tonight?</Label>
+          <ChipRow>
+            {MOODS.map((m) => (
+              <Chip
+                key={m}
+                on={mood === m}
+                onClick={() => setMood(mood === m ? null : m)}
+                ariaPressed={mood === m}
+              >
+                {MOOD_LABELS[m]}
+              </Chip>
+            ))}
+          </ChipRow>
         </div>
 
-        <div className="button-row" style={{ marginTop: 14 }}>
-          <button
-            className={favsOnly ? 'btn secondary' : 'btn ghost'}
-            onClick={() => setFavsOnly((v) => !v)}
-            aria-pressed={favsOnly}
-          >
+        <ChipRow style={{ marginTop: 20 }}>
+          <Chip on={favsOnly} onClick={() => setFavsOnly((v) => !v)} ariaPressed={favsOnly}>
             ★ Favorites only {favs.length > 0 ? `(${favs.length})` : ''}
-          </button>
-          <button className="btn ghost" onClick={clearFilters}>
-            Clear filters
-          </button>
-        </div>
+          </Chip>
+          <Chip onClick={clearFilters}>Clear filters</Chip>
+        </ChipRow>
       </section>
 
       {compareStrains.length >= 2 && (
         <section className="card" aria-label="Strain comparison">
-          <h2>⚖️ Side by side</h2>
+          <h2 className="tool-title">Side by side</h2>
           <div className="result-box" style={{ overflowX: 'auto', padding: 0 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.95rem' }}>
               <thead>
