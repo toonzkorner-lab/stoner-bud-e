@@ -515,7 +515,7 @@ export default function App() {
                       setMoreOpen(false);
                     }}
                   >
-                    <Icon size={18} aria-hidden />
+                    <Icon size={22} aria-hidden />
                     <span>{item.label}</span>
                   </button>
                 );
@@ -534,7 +534,7 @@ export default function App() {
                   aria-current={on ? 'page' : undefined}
                   onClick={() => setTab(item.id)}
                 >
-                  <Icon size={20} aria-hidden />
+                  <Icon size={28} aria-hidden />
                   <span>{item.label}</span>
                 </button>
               );
@@ -547,7 +547,7 @@ export default function App() {
               aria-haspopup="menu"
               onClick={() => setMoreOpen((open) => !open)}
             >
-              <Ellipsis size={20} aria-hidden />
+              <Ellipsis size={28} aria-hidden />
               <span>More</span>
             </button>
           </nav>
