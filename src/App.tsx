@@ -95,6 +95,20 @@ export default function App() {
   const [vibe, setVibe] = useState<Vibe>(() => load(VIBE_KEY, DEFAULT_VIBE));
   const [source, setSource] = useState<Source>(null);
   const [timerStatus, setTimerStatus] = useState('No timer running yet.');
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator === 'undefined' ? true : navigator.onLine,
+  );
+
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
 
   useEffect(() => save(SESSION_KEY, session), [session]);
   useEffect(() => save(TRANSCRIPT_KEY, transcript), [transcript]);
@@ -109,6 +123,13 @@ export default function App() {
         {source === 'fallback' && <span className="badge offline">● Offline buddy</span>}
         {source === null && <span className="badge">Say hey to get started</span>}
       </header>
+
+      {!isOnline && (
+        <p className="offline-banner" role="status">
+          📶 You&apos;re offline — Bud-E&apos;s tools still work, but chat needs internet for
+          live AI.
+        </p>
+      )}
 
       <nav className="tabs" aria-label="Main tabs">
         <button className={tab === 'chat' ? 'tab active' : 'tab'} onClick={() => setTab('chat')}>

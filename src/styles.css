@@ -109,6 +109,18 @@ p {
   color: var(--warn);
 }
 
+/* Shown when the browser reports no connection (PWA offline state). */
+
+.offline-banner {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #3d2f1a;
+  border: 1px solid #6b5518;
+  color: var(--warn);
+  font-size: 0.95rem;
+}
+
 /* Tabs */
 
 .tabs {
