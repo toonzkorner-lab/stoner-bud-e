@@ -9,7 +9,11 @@ import { BUD_E_SYSTEM_PROMPT } from '../src/bude.ts';
 import type { ChatMessage, Session } from '../src/bude.ts';
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] as const;
+// NOTE (2026-11-08): Groq retired llama-3.3-70b-versatile and
+// llama-3.1-8b-instant for free/developer tier on 2026-08-16
+// (console.groq.com/docs/deprecations). Groq's recommended replacements:
+// gpt-oss-120b (for the 70B) and gpt-oss-20b (for the 8B).
+const GROQ_MODELS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'] as const;
 
 interface GroqChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -115,7 +119,12 @@ async function callGroq(
     }),
   });
 
-  if (!groqRes.ok) return null;
+  if (!groqRes.ok) {
+    // Log status only (never the key or body) so a dead model/key shows
+    // up in Vercel runtime logs instead of failing silently to fallback.
+    console.error(`[bud-e chat] Groq ${model} HTTP ${groqRes.status}`);
+    return null;
+  }
 
   const data = (await groqRes.json()) as GroqResponse;
   const reply = data.choices?.[0]?.message?.content?.trim();
