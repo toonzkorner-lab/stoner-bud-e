@@ -145,6 +145,24 @@ function saveSnapshot(state: ServerState): void {
 const DELETE_QUEUE_KEY = 'bude-deleted-queue-v1';
 const TOMBSTONE_CACHE_KEY = 'bude-sync-tombstones-v1';
 
+/**
+ * Wipe everything sync keeps on this device: the upload snapshot, the
+ * pending delete queue, and the tombstone cache. Used when an account is
+ * deleted, so a fresh account on this device never inherits the old one's
+ * sync state. Theme and age-gate are device preferences, not account data —
+ * they are left alone.
+ */
+export function clearLocalSyncState(): void {
+  try {
+    localStorage.removeItem(SNAPSHOT_KEY);
+    localStorage.removeItem(DELETE_QUEUE_KEY);
+    localStorage.removeItem(TOMBSTONE_CACHE_KEY);
+  } catch {
+    // Storage blocked — the keys just stay, harmlessly empty of meaning
+    // once the account is gone.
+  }
+}
+
 function loadDeleteQueue(): Tombstone[] {
   try {
     const raw = localStorage.getItem(DELETE_QUEUE_KEY);

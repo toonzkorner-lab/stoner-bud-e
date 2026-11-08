@@ -1,21 +1,22 @@
-// Stoner Bud-E — Tonight tab: tonight's session at a glance.
-// Reuses the session state from App.tsx — no second session store.
+// Stoner Bud-E — Tonight tab: tonight's session at a glance, Grok layout.
+// Session editing lives here now (Grok's Logger): method / amount / when /
+// experience chips in a card. The Chat tab shows a compact pill instead.
 
 import { useEffect, useState } from 'react';
 import { METHOD_LABELS, formatClock, minutesSinceTaken, parseClock } from './bude';
-import type { Session } from './bude';
-
-interface Vibe {
-  setting: string;
-  sound: string;
-  snack: string;
-  energy: string;
-}
+import type { Method, Session } from './bude';
+import { Chip, ChipRow, Label, PageHead } from './bits';
 
 const EXPERIENCE_LABELS: Record<Session['experience'], string> = {
   new: 'New — just starting out',
   some: 'Some experience',
   experienced: 'Experienced — I know my dose',
+};
+
+const EXPERIENCE_SHORT: Record<Session['experience'], string> = {
+  new: 'New',
+  some: 'Some',
+  experienced: 'Experienced',
 };
 
 function timeline(session: Session): { label: string; detail: string }[] {
@@ -41,15 +42,24 @@ function activePhase(session: Session, since: number | null): number | null {
   return since < 90 ? 0 : since < 240 ? 1 : 2;
 }
 
+/** Current clock as "HH:MM" for the "Just now" time chip. */
+function clockNow(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export default function TonightTab(props: {
   session: Session;
+  setSession: (s: Session) => void;
   vibe: Vibe;
   timerStatus: string;
   onChat: () => void;
   onTools: () => void;
 }) {
-  const { session, vibe, timerStatus, onChat, onTools } = props;
+  const { session, setSession, vibe, timerStatus, onChat, onTools } = props;
   const [, setNow] = useState(Date.now());
+  // Open on the logger when no dose is logged yet (Grok: editing when no session).
+  const [editing, setEditing] = useState(session.amount.trim() === '');
 
   // Refresh the "how long ago" line every minute.
   useEffect(() => {
@@ -83,36 +93,43 @@ export default function TonightTab(props: {
           ? 'Just landed or about to — one or two small hits, then wait 15 minutes.'
           : 'You are in it now. Drink some water, settle in.';
 
+  const inhaled = session.method === 'flower' || session.method === 'vape' || session.method === 'dab';
+  const waitLabel = inhaled ? 'Wait 15 minutes between hits' : 'Wait the full 2 hours';
+  const waitMinutes = inhaled ? 15 : 120;
+
   return (
     <main>
-      <div className="garden-hero">
-        <img src="/garden/leaf.jpg" alt="Green leaves in a calm night garden" />
-      </div>
-      <h1 className="tonight-hero">Tonight</h1>
-      <p className="muted">Log the real dose. Bud-E will time it and stop guessing.</p>
+      <PageHead title="Tonight" sub="Log the real dose. Bud-E will time it and stop guessing." />
 
-      <section className="card" aria-label="Tonight's session at a glance">
-        <p className="eyebrow">{METHOD_LABELS[session.method]}</p>
-        <p className="tonight-big">
-          {amount ? `${amount}${session.unit}` : 'No dose logged yet'}
-        </p>
-        <p className="muted">{EXPERIENCE_LABELS[session.experience]}</p>
-        <p>{agoText}</p>
-        <p className="muted">{status}</p>
-        <div className="button-row" style={{ marginTop: 12 }}>
-          <button className="btn" onClick={onChat}>
-            💬 Ask Bud-E
-          </button>
-          <button className="btn secondary" onClick={onTools}>
-            ⏱️ Open the timer
-          </button>
-        </div>
-        <p style={{ marginTop: 12, marginBottom: 0 }}>
-          <button className="btn ghost" onClick={onChat}>
-            Change what I took
-          </button>
-        </p>
-      </section>
+      {editing ? (
+        <Logger
+          initial={session}
+          onDone={() => setEditing(false)}
+          onCancel={amount !== '' ? () => setEditing(false) : undefined}
+          onSave={setSession}
+        />
+      ) : (
+        <section className="card" aria-label="Tonight's session at a glance">
+          <p className="eyebrow">{METHOD_LABELS[session.method]}</p>
+          <p className="tonight-big">
+            {amount ? `${amount}${session.unit}` : 'No dose logged yet'}
+          </p>
+          <p className="muted">{EXPERIENCE_LABELS[session.experience]}</p>
+          <p>{agoText}</p>
+          <p className="muted">{status}</p>
+          <div className="button-row" style={{ marginTop: 12 }}>
+            <button className="btn sm secondary" onClick={() => setEditing(true)}>
+              ✏️ Edit
+            </button>
+            <button className="btn sm" onClick={onChat}>
+              💬 Ask Bud-E
+            </button>
+            <button className="btn sm secondary" onClick={onTools}>
+              ⏱️ Open the timer
+            </button>
+          </div>
+        </section>
+      )}
 
       <section className="card" aria-label="How this usually goes">
         <h2>How this usually goes</h2>
@@ -133,19 +150,173 @@ export default function TonightTab(props: {
         </ol>
       </section>
 
-      <section className="card" aria-label="Tonight's plan summary">
-        <h2>📋 Tonight&apos;s plan</h2>
-        <p className="plan-sentence" style={{ marginBottom: 10 }}>
-          {vibe.setting} vibes, {vibe.sound} on, craving {vibe.snack}, feeling {vibe.energy}.
-        </p>
-        <p className="muted" style={{ marginBottom: 0 }}>
-          ⏱️ {timerStatus}
-        </p>
-      </section>
+      <button className="btn btn-block" onClick={onTools}>
+        {waitLabel} · {waitMinutes} min
+      </button>
 
-      <p className="muted small">
-        Start low, go slow. Never drive high. If a pet eats an edible, call a vet.
+      <ul style={{ marginTop: 16, listStyle: 'none', padding: 0 }} className="muted small">
+        <li>Start low, go slow.</li>
+        <li>Never drive high.</li>
+        <li>If a pet eats an edible, call a vet.</li>
+      </ul>
+
+      <p className="muted small" style={{ marginTop: 12 }}>
+        Tonight: {vibe.setting} vibes, {vibe.sound} on, craving {vibe.snack}, feeling {vibe.energy}. · ⏱️{' '}
+        {timerStatus}
       </p>
     </main>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Session logger (Grok's Logger) — chips for every field, same fields as the
+// old session panel: method, amount, unit, time taken, experience.
+// ---------------------------------------------------------------------------
+
+function Logger({
+  initial,
+  onDone,
+  onCancel,
+  onSave,
+}: {
+  initial: Session;
+  onDone: () => void;
+  onCancel?: () => void;
+  onSave: (s: Session) => void;
+}) {
+  const [method, setMethod] = useState<Method>(initial.method);
+  const [amount, setAmount] = useState(initial.amount);
+  const [unit, setUnit] = useState<Session['unit']>(initial.unit);
+  const [timeMode, setTimeMode] = useState<'now' | 'pick' | 'unsure'>(
+    initial.timeTaken ? 'pick' : 'unsure',
+  );
+  const [timeTaken, setTimeTaken] = useState(initial.timeTaken || clockNow());
+  const [experience, setExperience] = useState<Session['experience']>(initial.experience);
+
+  function chooseMethod(next: Method): void {
+    setMethod(next);
+    setUnit(next === 'flower' ? 'g' : 'mg');
+  }
+
+  function save(): void {
+    onSave({
+      method,
+      amount: amount.trim(),
+      unit,
+      timeTaken: timeMode === 'unsure' ? '' : timeMode === 'now' ? clockNow() : timeTaken,
+      experience,
+    });
+    onDone();
+  }
+
+  const presets =
+    unit === 'g'
+      ? ['0.25', '0.5', '1']
+      : method === 'flower' || method === 'vape' || method === 'dab'
+        ? ['1', '2', '3']
+        : ['2.5', '5', '10'];
+
+  return (
+    <section className="card" aria-label="Log tonight's session">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div>
+          <Label>What did you take?</Label>
+          <ChipRow>
+            {(Object.keys(METHOD_LABELS) as Method[]).map((id) => (
+              <Chip key={id} on={method === id} onClick={() => chooseMethod(id)}>
+                {METHOD_LABELS[id]}
+              </Chip>
+            ))}
+          </ChipRow>
+        </div>
+
+        <div>
+          <Label>How much?</Label>
+          <ChipRow>
+            {presets.map((p) => (
+              <Chip key={p} on={amount === p} onClick={() => setAmount(p)}>
+                {p}
+                {unit}
+              </Chip>
+            ))}
+          </ChipRow>
+          <div className="field-row" style={{ marginTop: 12 }}>
+            <input
+              aria-label="Amount"
+              inputMode="decimal"
+              value={amount}
+              placeholder={unit === 'g' ? '0.5' : '5'}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+            <div className="unit-toggle">
+              {(['mg', 'g'] as const).map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  aria-pressed={unit === u}
+                  className={unit === u ? 'on' : ''}
+                  onClick={() => setUnit(u)}
+                >
+                  {u}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <Label>When?</Label>
+          <ChipRow>
+            <Chip on={timeMode === 'now'} onClick={() => setTimeMode('now')}>
+              Just now
+            </Chip>
+            <Chip on={timeMode === 'pick'} onClick={() => setTimeMode('pick')}>
+              Pick a time
+            </Chip>
+            <Chip on={timeMode === 'unsure'} onClick={() => setTimeMode('unsure')}>
+              Not sure
+            </Chip>
+          </ChipRow>
+          {timeMode === 'pick' && (
+            <input
+              aria-label="Time taken"
+              type="time"
+              value={timeTaken}
+              onChange={(e) => setTimeTaken(e.target.value)}
+              style={{ marginTop: 12 }}
+            />
+          )}
+        </div>
+
+        <div>
+          <Label>Experience</Label>
+          <ChipRow>
+            {(Object.keys(EXPERIENCE_SHORT) as Session['experience'][]).map((id) => (
+              <Chip key={id} on={experience === id} onClick={() => setExperience(id)}>
+                {EXPERIENCE_SHORT[id]}
+              </Chip>
+            ))}
+          </ChipRow>
+        </div>
+
+        <div className="button-row">
+          <button className="btn" onClick={save} style={{ flex: 1 }}>
+            Log this
+          </button>
+          {onCancel && (
+            <button className="btn secondary" onClick={onCancel}>
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+interface Vibe {
+  setting: string;
+  sound: string;
+  snack: string;
+  energy: string;
 }

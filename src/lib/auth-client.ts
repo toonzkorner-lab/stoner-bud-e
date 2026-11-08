@@ -130,6 +130,29 @@ export async function signOut(): Promise<void> {
 }
 
 /**
+ * Delete the signed-in account and everything stored under it, server-side
+ * (POST /api/account/delete). Throws a plain-words Error on failure. The
+ * caller clears the device's local copy afterwards — this only talks to
+ * the server.
+ */
+export async function deleteAccount(): Promise<void> {
+  let res: Response;
+  try {
+    res = await authedFetch('/api/account/delete', { method: 'POST' });
+  } catch {
+    throw new Error('Could not reach Bud-E right now — check your connection and try again.');
+  }
+  if (res.ok) return;
+  if (res.status === 401) {
+    throw new Error('You are not signed in — sign in first, then delete your account.');
+  }
+  if (res.status === 503) {
+    throw new Error('Account deletion is not available right now — try again in a bit.');
+  }
+  throw new Error('Could not delete the account — try again.');
+}
+
+/**
  * fetch() for this app's own API that always sends the session cookie and
  * defaults to JSON. `path` is like '/api/sync'. Under Capacitor it uses the
  * absolute live origin; on the web it is relative (same-origin).
