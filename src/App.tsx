@@ -1,5 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  BookOpen,
+  ClipboardList,
+  Ellipsis,
+  LayoutGrid,
+  Leaf,
+  MessageCircle,
+  Moon,
+  Package,
+  Pause,
+  Scale,
+  Settings,
+  Timer,
+  UserRound,
+} from 'lucide-react';
+import {
   DEFAULT_SESSION,
   HIGH_THOUGHTS,
   METHOD_LABELS,
@@ -56,6 +71,36 @@ function apiUrl(): string {
 
 type Tab = 'tonight' | 'chat' | 'tools' | 'plan' | 'strains' | 'journal' | 'stash' | 'break' | 'dose' | 'settings' | 'account';
 type Source = 'live' | 'fallback' | null;
+
+/** Live state of the edible timer, lifted to App so the header pill can show it. */
+interface TimerState {
+  status: 'idle' | 'running' | 'paused' | 'done';
+  remainingSec: number;
+  totalSec: number;
+}
+
+const IDLE_TIMER: TimerState = { status: 'idle', remainingSec: 0, totalSec: 0 };
+
+/** Bottom-nav destinations (8 slots: 7 tabs + More). All 11 tabs stay reachable. */
+const NAV_ITEMS: { id: Tab; label: string; icon: typeof Moon }[] = [
+  { id: 'tonight', label: 'Tonight', icon: Moon },
+  { id: 'chat', label: 'Buddy', icon: MessageCircle },
+  { id: 'stash', label: 'Stash', icon: Package },
+  { id: 'journal', label: 'Log', icon: BookOpen },
+  { id: 'tools', label: 'Tools', icon: LayoutGrid },
+  { id: 'plan', label: 'Plan', icon: ClipboardList },
+  { id: 'account', label: 'You', icon: UserRound },
+];
+
+/** Destinations that live in the More sheet above the nav. */
+const MORE_ITEMS: { id: Tab; label: string; icon: typeof Leaf }[] = [
+  { id: 'strains', label: 'Strains', icon: Leaf },
+  { id: 'break', label: 'Break', icon: Pause },
+  { id: 'dose', label: 'Dose', icon: Scale },
+  { id: 'settings', label: 'Settings', icon: Settings },
+];
+
+const MORE_TAB_IDS: Tab[] = MORE_ITEMS.map((item) => item.id);
 
 interface Vibe {
   setting: string;
@@ -132,6 +177,8 @@ export default function App() {
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [source, setSource] = useState<Source>(null);
   const [timerStatus, setTimerStatus] = useState('No timer running yet.');
+  const [timerState, setTimerState] = useState<TimerState>(IDLE_TIMER);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(
     typeof navigator === 'undefined' ? true : navigator.onLine,
   );
@@ -146,6 +193,20 @@ export default function App() {
       window.removeEventListener('offline', goOffline);
     };
   }, []);
+
+  // Close the More menu on Escape, and whenever the tab changes.
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [moreOpen]);
+
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [tab]);
 
   // Who is signed in? Runs once on load; signed-out is fine, not an error.
   useEffect(() => {
@@ -299,59 +360,79 @@ export default function App() {
     );
   }
 
+  const who = user ? user.name : 'Your account';
+  const showTimer = timerState.status !== 'idle';
+  const timerPct =
+    timerState.totalSec > 0
+      ? Math.min(100, Math.max(0, (1 - timerState.remainingSec / timerState.totalSec) * 100))
+      : 0;
+  const moreActive = MORE_TAB_IDS.includes(tab);
+
   return (
-    <div className="app">
-      <div className="garden-glow" aria-hidden />
-      <header className="header">
-        <h1>🌿 Stoner Bud-E</h1>
-        <p className="tagline">A calm buddy for the night you already started. Timers, straight answers, no lecture.</p>
-        {source === 'live' && <span className="badge live">● Live AI</span>}
-        {source === 'fallback' && <span className="badge offline">● Offline buddy</span>}
-        {source === null && <span className="badge">Say hey to get started</span>}
-      </header>
+    <div className="app-shell">
+      <div className="app-frame">
+        <div className="garden-glow" aria-hidden />
+        <header className="app-header">
+          <button
+            type="button"
+            className="brand-btn"
+            onClick={() => setTab('account')}
+            aria-label={user ? `Your account, ${who}` : 'Your account'}
+          >
+            <span className="brand-avatar">
+              <img src="/garden/leaf.jpg" alt="" />
+            </span>
+            <span className="brand-text">
+              <span className="brand-word">Bud-E</span>
+              <span className="brand-who">{who}</span>
+            </span>
+          </button>
+          <div className="header-actions">
+            {source === 'live' && <span className="badge live">● Live AI</span>}
+            {source === 'fallback' && <span className="badge offline">● Offline buddy</span>}
+            {source === null && <span className="badge">Say hey to get started</span>}
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Settings"
+              aria-pressed={tab === 'settings'}
+              onClick={() => setTab('settings')}
+            >
+              <Settings size={18} aria-hidden />
+            </button>
+            <span className="age-pill">21+</span>
+          </div>
+        </header>
 
-      {!isOnline && (
-        <p className="offline-banner" role="status">
-          📶 You&apos;re offline — Bud-E&apos;s tools still work, but chat needs internet for
-          live AI.
-        </p>
-      )}
+        {showTimer && (
+          <button
+            type="button"
+            className="timer-pill"
+            onClick={() => setTab('tools')}
+            aria-label="Edible timer — open the timer tool"
+          >
+            <span className="timer-pill-row">
+              <span className="timer-pill-label">
+                <Timer size={16} aria-hidden />
+                {timerState.status === 'done' ? "Wait's over" : 'Edible timer'}
+              </span>
+              <span className="timer-pill-time">{formatCountdown(timerState.remainingSec)}</span>
+            </span>
+            {timerState.status !== 'done' && (
+              <span className="timer-pill-track" aria-hidden>
+                <span className="timer-pill-fill" style={{ width: `${timerPct}%` }} />
+              </span>
+            )}
+          </button>
+        )}
 
-      <nav className="tabs" aria-label="Main tabs">
-        <button className={tab === 'tonight' ? 'tab active' : 'tab'} onClick={() => setTab('tonight')}>
-          🌙 Tonight
-        </button>
-        <button className={tab === 'chat' ? 'tab active' : 'tab'} onClick={() => setTab('chat')}>
-          💬 Chat
-        </button>
-        <button className={tab === 'tools' ? 'tab active' : 'tab'} onClick={() => setTab('tools')}>
-          🧰 Tools
-        </button>
-        <button className={tab === 'plan' ? 'tab active' : 'tab'} onClick={() => setTab('plan')}>
-          📋 Plan
-        </button>
-        <button className={tab === 'strains' ? 'tab active' : 'tab'} onClick={() => setTab('strains')}>
-          🌿 Strains
-        </button>
-        <button className={tab === 'journal' ? 'tab active' : 'tab'} onClick={() => setTab('journal')}>
-          📓 Journal
-        </button>
-        <button className={tab === 'stash' ? 'tab active' : 'tab'} onClick={() => setTab('stash')}>
-          🎒 Stash
-        </button>
-        <button className={tab === 'break' ? 'tab active' : 'tab'} onClick={() => setTab('break')}>
-          ⏸️ Break
-        </button>
-        <button className={tab === 'dose' ? 'tab active' : 'tab'} onClick={() => setTab('dose')}>
-          ⚖️ Dose
-        </button>
-        <button className={tab === 'settings' ? 'tab active' : 'tab'} onClick={() => setTab('settings')}>
-          ⚙️ Settings
-        </button>
-        <button className={tab === 'account' ? 'tab active' : 'tab'} onClick={() => setTab('account')}>
-          👤 Account
-        </button>
-      </nav>
+        <div className="app-content">
+          {!isOnline && (
+            <p className="offline-banner" role="status">
+              📶 You&apos;re offline — Bud-E&apos;s tools still work, but chat needs internet for
+              live AI.
+            </p>
+          )}
 
       {tab === 'tonight' && (
         <TonightTab
@@ -375,7 +456,7 @@ export default function App() {
         />
       )}
       {tab === 'tools' && (
-        <ToolsTab session={session} vibe={vibe} setVibe={setVibe} setTimerStatus={setTimerStatus} />
+        <ToolsTab session={session} vibe={vibe} setVibe={setVibe} setTimerStatus={setTimerStatus} onTimerState={setTimerState} />
       )}
       {tab === 'plan' && <PlanTab session={session} vibe={vibe} timerStatus={timerStatus} />}
       {tab === 'strains' && <StrainsTab onAskAbout={askAboutStrain} />}
@@ -403,11 +484,75 @@ export default function App() {
         />
       )}
 
-      <footer className="footer">
-        21+ only. Bud-E is a buddy, not a doctor. Start low, go slow. Never drive high.
-        <br />
-        If a pet eats edibles, call a vet right away.
-      </footer>
+          <footer className="footer">
+            21+ only. Bud-E is a buddy, not a doctor. Start low, go slow. Never drive high.
+            <br />
+            If a pet eats edibles, call a vet right away.
+          </footer>
+        </div>
+
+        {moreOpen && (
+          <button
+            type="button"
+            className="more-backdrop"
+            aria-label="Close menu"
+            onClick={() => setMoreOpen(false)}
+          />
+        )}
+        <div className="nav-wrap">
+          {moreOpen && (
+            <div className="more-sheet" role="menu" aria-label="More destinations">
+              {MORE_ITEMS.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="menuitem"
+                    className="more-item"
+                    onClick={() => {
+                      setTab(item.id);
+                      setMoreOpen(false);
+                    }}
+                  >
+                    <Icon size={18} aria-hidden />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <nav className="bottom-nav" aria-label="Main">
+            {NAV_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const on = tab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={on ? 'nav-item active' : 'nav-item'}
+                  aria-current={on ? 'page' : undefined}
+                  onClick={() => setTab(item.id)}
+                >
+                  <Icon size={20} aria-hidden />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              className={moreActive ? 'nav-item active' : 'nav-item'}
+              aria-current={moreActive ? 'page' : undefined}
+              aria-expanded={moreOpen}
+              aria-haspopup="menu"
+              onClick={() => setMoreOpen((open) => !open)}
+            >
+              <Ellipsis size={20} aria-hidden />
+              <span>More</span>
+            </button>
+          </nav>
+        </div>
+      </div>
     </div>
   );
 }
@@ -707,16 +852,18 @@ function ToolsTab({
   vibe,
   setVibe,
   setTimerStatus,
+  onTimerState,
 }: {
   session: Session;
   vibe: Vibe;
   setVibe: (v: Vibe) => void;
   setTimerStatus: (s: string) => void;
+  onTimerState: (s: TimerState) => void;
 }) {
   return (
     <main className="tool-grid">
       <VibeCheck vibe={vibe} setVibe={setVibe} />
-      <EdibleTimer session={session} setTimerStatus={setTimerStatus} />
+      <EdibleTimer session={session} setTimerStatus={setTimerStatus} onTimerState={onTimerState} />
       <BreathingBubble />
       <MunchiesMaker />
       <HighThoughts />
@@ -769,14 +916,30 @@ function VibeCheck({ vibe, setVibe }: { vibe: Vibe; setVibe: (v: Vibe) => void }
 function EdibleTimer({
   session,
   setTimerStatus,
+  onTimerState,
 }: {
   session: Session;
   setTimerStatus: (s: string) => void;
+  onTimerState: (s: TimerState) => void;
 }) {
   const [minutesInput, setMinutesInput] = useState(120);
   const [remaining, setRemaining] = useState(0);
+  const [totalSec, setTotalSec] = useState(0);
   const [running, setRunning] = useState(false);
   const [finished, setFinished] = useState(false);
+
+  // Report the live timer state up to App on every change, so the header
+  // pill can show the countdown and progress.
+  useEffect(() => {
+    const status: TimerState['status'] = finished
+      ? 'done'
+      : running
+        ? 'running'
+        : totalSec > 0 && remaining > 0
+          ? 'paused'
+          : 'idle';
+    onTimerState({ status, remainingSec: remaining, totalSec });
+  }, [finished, running, remaining, totalSec, onTimerState]);
 
   useEffect(() => {
     if (!running) return;
@@ -796,16 +959,19 @@ function EdibleTimer({
     if (since === null || taken === null) {
       setMinutesInput(120);
       setRemaining(120 * 60);
+      setTotalSec(120 * 60);
       setTimerStatus('Edible timer running — 2 hours from now (no time taken set).');
     } else if (since >= 120) {
       setMinutesInput(0);
       setRemaining(0);
+      setTotalSec(0);
       setFinished(true);
       setTimerStatus('Edible timer finished — already past the 2-hour mark.');
     } else {
       const left = 120 - since;
       setMinutesInput(left);
       setRemaining(left * 60);
+      setTotalSec(left * 60);
       setTimerStatus(
         `Edible timer running — counting down to the 2-hour mark from ${formatClock(taken)}.`,
       );
@@ -818,6 +984,7 @@ function EdibleTimer({
     const mins = Math.max(1, Math.min(720, Math.floor(minutesInput) || 120));
     setMinutesInput(mins);
     setRemaining(mins * 60);
+    setTotalSec(mins * 60);
     setFinished(false);
     setRunning(true);
     setTimerStatus(`Edible timer running — ${mins} minutes.`);
@@ -860,6 +1027,7 @@ function EdibleTimer({
               onClick={() => {
                 setRunning(false);
                 setRemaining(0);
+                setTotalSec(0);
                 setFinished(false);
                 setTimerStatus('Edible timer reset.');
               }}

@@ -1,5 +1,5 @@
 // Stoner Bud-E — /api/chat (Vercel Node serverless function).
-// POST only. Live AI via Google Gemini when GEMINI_API_KEY is set in the
+// POST only. Live AI via Groq Cloud when GROQ_API_KEY is set in the
 // environment; otherwise returns { source: "fallback" } and the client answers
 // with its local buddy engine. This function NEVER returns a 500 — any
 // failure degrades to fallback so the chat always answers.
@@ -8,21 +8,17 @@
 import { BUD_E_SYSTEM_PROMPT } from '../src/bude.ts';
 import type { ChatMessage, Session } from '../src/bude.ts';
 
-const GEMINI_MODEL = 'gemini-3.5-flash-lite';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] as const;
 
-interface GeminiPart {
-  text: string;
+interface GroqChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
 }
 
-interface GeminiContent {
-  role: 'user' | 'model';
-  parts: GeminiPart[];
-}
-
-interface GeminiResponse {
-  candidates?: Array<{
-    content?: { parts?: GeminiPart[] };
+interface GroqResponse {
+  choices?: Array<{
+    message?: { content?: string | null };
   }>;
 }
 
@@ -100,6 +96,32 @@ function sessionLine(session: Partial<Session> | undefined, journal?: string): s
   return `${base}${journalBit}`;
 }
 
+async function callGroq(
+  apiKey: string,
+  model: string,
+  messages: GroqChatMessage[],
+): Promise<string | null> {
+  const groqRes = await fetch(GROQ_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.9,
+      max_tokens: 600,
+    }),
+  });
+
+  if (!groqRes.ok) return null;
+
+  const data = (await groqRes.json()) as GroqResponse;
+  const reply = data.choices?.[0]?.message?.content?.trim();
+  return reply ? reply : null;
+}
+
 export default async function handler(req: ReqLike, res: ResLike): Promise<void> {
   try {
     res.setHeader('Content-Type', 'application/json');
@@ -114,7 +136,7 @@ export default async function handler(req: ReqLike, res: ResLike): Promise<void>
       return;
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
       fallback(res);
       return;
@@ -127,37 +149,20 @@ export default async function handler(req: ReqLike, res: ResLike): Promise<void>
       return;
     }
 
-    const contents: GeminiContent[] = [
-      { role: 'user', parts: [{ text: sessionLine(body.session, body.journal) }] },
-      ...messages.map((m): GeminiContent => ({
-        role: m.role === 'bud' ? 'model' : 'user',
-        parts: [{ text: m.text }],
+    const groqMessages: GroqChatMessage[] = [
+      { role: 'system', content: BUD_E_SYSTEM_PROMPT },
+      { role: 'user', content: sessionLine(body.session, body.journal) },
+      ...messages.map((m): GroqChatMessage => ({
+        role: m.role === 'bud' ? 'assistant' : 'user',
+        content: m.text,
       })),
     ];
 
-    const geminiRes = await fetch(GEMINI_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-      },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: BUD_E_SYSTEM_PROMPT }] },
-        contents,
-        generationConfig: { temperature: 0.9, maxOutputTokens: 600 },
-      }),
-    });
-
-    if (!geminiRes.ok) {
-      fallback(res);
-      return;
+    let reply: string | null = null;
+    for (const model of GROQ_MODELS) {
+      reply = await callGroq(apiKey, model, groqMessages);
+      if (reply) break;
     }
-
-    const data = (await geminiRes.json()) as GeminiResponse;
-    const reply = data.candidates?.[0]?.content?.parts
-      ?.map((p) => p.text)
-      .join('')
-      .trim();
     if (!reply) {
       fallback(res);
       return;

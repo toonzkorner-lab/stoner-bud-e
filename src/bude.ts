@@ -35,7 +35,7 @@ export const METHOD_LABELS: Record<Method, string> = {
   other: 'Other',
 };
 
-/** System prompt for the live-AI path (Gemini). Short, warm, harm-reduction first. */
+/** System prompt for the live-AI path (Groq). Short, warm, harm-reduction first. */
 export const BUD_E_SYSTEM_PROMPT = [
   'You are Bud-E, a warm, funny, plain-spoken cannabis buddy for adults 21+.',
   'Talk like a chill friend, not a textbook and never a doctor. Keep it simple, everyday language.',
