@@ -1,23 +1,87 @@
-/* Stoner Bud-E — dark cozy green theme. All app styling lives here. */
+/* Stoner Bud-E — night-garden theme (tokens from the Grok night-garden app).
+   Four themes switch via html[data-theme]: night (default), day, ember, moon.
+   Fraunces for headings, Outfit for body, system fonts as offline fallback. */
 
 * {
   box-sizing: border-box;
 }
 
-:root {
-  --bg: #122016;
-  --bg-soft: #1a2e1a;
-  --card: #223823;
-  --card-soft: #2a452a;
-  --line: #3a5a3a;
-  --text: #eef5e9;
-  --muted: #b9cdb2;
-  --accent: #8fd14f;
-  --accent-soft: #a3e635;
-  --accent-dark: #4c7a2e;
+/* Night garden (default) — exact Grok tokens. */
+:root,
+html[data-theme='night'] {
+  color-scheme: dark;
+  --bg: #07110c;
+  --glow: #1a3d24;
+  --surface: #0e1913;
+  --card: #163024;
+  --card-2: #1d3b2b;
+  --line: #2f6844;
+  --text: #f3f6ea;
+  --muted: #b7cbb0;
+  --accent: #c6f25c;
+  --accent-ink: #142107;
+  --danger: #ffb0a4;
+  --danger-bg: #3c2420;
   --warn: #f5c542;
-  --danger: #ff8a7a;
-  --radius: 16px;
+  /* Aliases so existing components keep working. */
+  --bg-soft: var(--surface);
+  --card-soft: var(--card-2);
+  --accent-soft: var(--accent);
+  --accent-dark: var(--accent);
+  --radius: 1.25rem;
+  --font-sans: "Outfit", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+}
+
+html[data-theme='day'] {
+  color-scheme: light;
+  --bg: #f4f1e4;
+  --glow: #d5e6c4;
+  --surface: #fbf8ef;
+  --card: #e7f0dc;
+  --card-2: #d5e4c4;
+  --line: #8eae78;
+  --text: #142107;
+  --muted: #3e5340;
+  --accent: #1f5c28;
+  --accent-ink: #f7f3e6;
+  --danger: #8a2a22;
+  --danger-bg: #f6ddd8;
+  --warn: #7a5c00;
+}
+
+html[data-theme='ember'] {
+  color-scheme: dark;
+  --bg: #140c08;
+  --glow: #3d2214;
+  --surface: #1c120c;
+  --card: #2c1a12;
+  --card-2: #3c2418;
+  --line: #8a5430;
+  --text: #f8efe4;
+  --muted: #d4bba6;
+  --accent: #f0a04b;
+  --accent-ink: #1c0e06;
+  --danger: #ffb0a4;
+  --danger-bg: #3c2420;
+  --warn: #f5c542;
+}
+
+html[data-theme='moon'] {
+  color-scheme: dark;
+  --bg: #070d14;
+  --glow: #16304a;
+  --surface: #0d1722;
+  --card: #152433;
+  --card-2: #1c3044;
+  --line: #3d6480;
+  --text: #eef4f8;
+  --muted: #b7c9d6;
+  --accent: #7ddec8;
+  --accent-ink: #04221c;
+  --danger: #ffb0a4;
+  --danger-bg: #3c2428;
+  --warn: #f5c542;
 }
 
 html,
@@ -26,7 +90,7 @@ body {
   padding: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
   font-size: 17px;
   line-height: 1.5;
   -webkit-text-size-adjust: 100%;
@@ -37,12 +101,43 @@ body {
 }
 
 .app {
+  position: relative;
   max-width: 720px;
   margin: 0 auto;
   padding: 16px 16px 32px;
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+}
+
+/* Soft garden light at the top of the app. */
+.garden-glow {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 320px;
+  pointer-events: none;
+  background: radial-gradient(ellipse at top, var(--glow), transparent 68%);
+}
+
+.garden-hero {
+  overflow: hidden;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  margin-bottom: 16px;
+}
+
+.garden-hero img {
+  display: block;
+  width: 100%;
+  height: 180px;
+  object-fit: cover;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 500;
 }
 
 h1 {
@@ -76,6 +171,7 @@ p {
 /* Header */
 
 .header {
+  position: relative;
   text-align: center;
   padding: 10px 0 4px;
 }
@@ -98,9 +194,9 @@ p {
 }
 
 .badge.live {
-  background: #1e3d1a;
-  border-color: var(--accent-dark);
-  color: var(--accent-soft);
+  background: var(--card-2);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .badge.offline {
@@ -143,9 +239,9 @@ p {
 }
 
 .tab.active {
-  background: var(--accent-dark);
+  background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
 }
 
 /* Cards */
@@ -229,14 +325,14 @@ button {
   padding: 12px 20px;
   border-radius: 14px;
   border: none;
-  background: var(--accent-dark);
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 1.05rem;
   font-weight: 700;
 }
 
 .btn:hover {
-  background: #5b8f38;
+  filter: brightness(1.08);
 }
 
 .btn:disabled {
@@ -259,9 +355,9 @@ button {
 }
 
 .btn.danger {
-  background: #5a2320;
-  border: 2px solid #8a3a33;
-  color: #ffd9d4;
+  background: var(--danger-bg);
+  border: 2px solid var(--danger);
+  color: var(--danger);
 }
 
 .btn-block {
@@ -290,8 +386,8 @@ button {
 
 .msg.user {
   align-self: flex-end;
-  background: var(--accent-dark);
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-ink);
   border-bottom-right-radius: 4px;
 }
 
@@ -366,16 +462,16 @@ button {
   width: 170px;
   height: 170px;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #a3e635, #4c7a2e 70%);
+  background: radial-gradient(circle at 35% 35%, var(--accent), var(--card-2) 70%);
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
   font-weight: 800;
   font-size: 1.1rem;
-  color: #122016;
+  color: var(--text);
   transition: transform 4s ease-in-out;
-  box-shadow: 0 0 0 8px rgba(163, 230, 53, 0.12);
+  box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .breath-phase {
@@ -417,12 +513,12 @@ button {
 
 .trivia-option.correct {
   border-color: var(--accent);
-  background: #1e3d1a;
+  background: var(--card-2);
 }
 
 .trivia-option.wrong {
   border-color: var(--danger);
-  background: #3d1e1a;
+  background: var(--danger-bg);
 }
 
 .trivia-option:disabled {
@@ -459,6 +555,258 @@ button {
   line-height: 1.6;
 }
 
+/* Tonight tab */
+
+.tonight-hero {
+  font-family: var(--font-display);
+  font-size: 2.25rem;
+  line-height: 1.1;
+}
+
+.tonight-big {
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  line-height: 1.2;
+  text-transform: capitalize;
+}
+
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.timeline li {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.timeline .dot {
+  margin-top: 8px;
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.timeline li.active .dot {
+  background: var(--accent);
+}
+
+.timeline li.active .phase-label {
+  color: var(--accent);
+}
+
+/* Age gate */
+
+.age-gate {
+  position: relative;
+  max-width: 720px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 40px 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.age-gate h1 {
+  font-size: 3rem;
+  font-style: italic;
+  line-height: 1;
+}
+
+/* Theme picker (Settings tab) */
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.theme-swatch {
+  min-height: 96px;
+  padding: 12px;
+  text-align: left;
+  border-radius: 16px;
+  border: 2px solid transparent;
+  background: var(--swatch-bg);
+  color: var(--swatch-ink);
+  font-family: inherit;
+}
+
+.theme-swatch[aria-pressed='true'] {
+  border-color: var(--swatch-accent);
+}
+
+.theme-swatch[data-swatch='night'] {
+  --swatch-bg: #07110c;
+  --swatch-card: #163024;
+  --swatch-ink: #f3f6ea;
+  --swatch-accent: #c6f25c;
+}
+
+.theme-swatch[data-swatch='day'] {
+  --swatch-bg: #f4f1e4;
+  --swatch-card: #e7f0dc;
+  --swatch-ink: #142107;
+  --swatch-accent: #1f5c28;
+}
+
+.theme-swatch[data-swatch='ember'] {
+  --swatch-bg: #140c08;
+  --swatch-card: #2c1a12;
+  --swatch-ink: #f8efe4;
+  --swatch-accent: #f0a04b;
+}
+
+.theme-swatch[data-swatch='moon'] {
+  --swatch-bg: #070d14;
+  --swatch-card: #152433;
+  --swatch-ink: #eef4f8;
+  --swatch-accent: #7ddec8;
+}
+
+.theme-swatch .swatch-dot {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--swatch-accent);
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
+.theme-swatch .swatch-bar {
+  display: block;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--swatch-card);
+  margin: 10px 0 8px;
+}
+
+/* Stash jars on a shelf */
+
+.jar-shelf {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 20px 12px;
+  align-items: end;
+}
+
+.jar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.jar {
+  width: 110px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.jar-lid {
+  width: 76px;
+  height: 16px;
+  border-radius: 6px 6px 3px 3px;
+  background: var(--accent);
+  border: 1px solid var(--line);
+}
+
+.jar-body {
+  position: relative;
+  width: 110px;
+  height: 130px;
+  overflow: hidden;
+  border: 2px solid var(--line);
+  border-top: none;
+  border-radius: 10px 10px 22px 22px;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.jar-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 55%, var(--card-2)));
+  opacity: 0.75;
+}
+
+.jar-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px;
+  text-align: center;
+}
+
+.jar-label strong {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.jar-amount {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.jar-shelf-board {
+  width: 100%;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  margin-top: -4px;
+}
+
+.jar-controls {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.jar-controls .field-row {
+  align-items: center;
+}
+
+.jar-controls input {
+  min-height: 44px;
+  text-align: center;
+  padding: 6px 8px;
+  font-size: 1rem;
+}
+
+.jar-step {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 2px solid var(--line);
+  background: var(--card-soft);
+  color: var(--text);
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+
 /* Footer */
 
 .footer {
@@ -482,5 +830,11 @@ button {
   .breath-circle {
     width: 150px;
     height: 150px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .breath-circle {
+    transition: none !important;
   }
 }

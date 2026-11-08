@@ -17,7 +17,7 @@ export default defineConfig({
       workbox: {
         // Cache the app shell so it opens offline. The manifest is precached
         // too; /api/chat is never cached — live AI stays network-only.
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,jpg,svg,webmanifest}'],
         navigateFallback: '/',
         runtimeCaching: [
           {

@@ -13,6 +13,10 @@ import {
 } from './bude';
 import type { ChatMessage, Experience, Method, Session } from './bude';
 import StrainsTab from './StrainsTab';
+import TonightTab from './TonightTab';
+import SettingsTab from './SettingsTab';
+import { AGE_GATE_KEY, THEME_KEY, isThemeId, loadTheme } from './theme';
+import type { ThemeId } from './theme';
 import JournalTab from './JournalTab';
 import StashTab from './StashTab';
 import BreakTab from './BreakTab';
@@ -21,6 +25,11 @@ import { JOURNAL_KEY, journalSummary } from './journal';
 import type { JournalEntry } from './journal';
 import { STASH_KEY } from './stash';
 import type { StashItem } from './stash';
+import AuthTab from './AuthTab';
+import { uploadLocal } from './lib/sync';
+import type { SyncSettings } from './lib/sync';
+import { getSession } from './lib/auth-client';
+import type { AuthUser } from './lib/auth-client';
 
 const TRANSCRIPT_KEY = 'bude-transcript-v1';
 const SESSION_KEY = 'bude-session-v1';
@@ -45,7 +54,7 @@ function apiUrl(): string {
   return '/api/chat';
 }
 
-type Tab = 'chat' | 'tools' | 'plan' | 'strains' | 'journal' | 'stash' | 'break' | 'dose';
+type Tab = 'tonight' | 'chat' | 'tools' | 'plan' | 'strains' | 'journal' | 'stash' | 'break' | 'dose' | 'settings' | 'account';
 type Source = 'live' | 'fallback' | null;
 
 interface Vibe {
@@ -98,12 +107,28 @@ function formatCountdown(totalSeconds: number): string {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('chat');
+  const [tab, setTab] = useState<Tab>('tonight');
+  const [theme, setTheme] = useState<ThemeId>(() => loadTheme());
+  const [ageConfirmed, setAgeConfirmed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(AGE_GATE_KEY) === 'yes';
+    } catch {
+      return false;
+    }
+  });
+  const [ageDeclined, setAgeDeclined] = useState(false);
   const [session, setSession] = useState<Session>(() => load(SESSION_KEY, DEFAULT_SESSION));
   const [transcript, setTranscript] = useState<ChatMessage[]>(() => loadList(TRANSCRIPT_KEY));
   const [vibe, setVibe] = useState<Vibe>(() => load(VIBE_KEY, DEFAULT_VIBE));
   const [journal, setJournal] = useState<JournalEntry[]>(() => loadList(JOURNAL_KEY));
   const [stash, setStash] = useState<StashItem[]>(() => loadList(STASH_KEY));
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [syncMessage, setSyncMessage] = useState('');
+  // Guards the debounced sync effect while a server state is being applied,
+  // so applying a download does not immediately trigger an upload of itself.
+  const applyingServerState = useRef(false);
+  const userRef = useRef<AuthUser | null>(null);
+  userRef.current = user;
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [source, setSource] = useState<Source>(null);
   const [timerStatus, setTimerStatus] = useState('No timer running yet.');
@@ -122,11 +147,44 @@ export default function App() {
     };
   }, []);
 
+  // Who is signed in? Runs once on load; signed-out is fine, not an error.
+  useEffect(() => {
+    let cancelled = false;
+    void getSession().then((u) => {
+      if (!cancelled) setUser(u);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // Storage blocked — the theme still applies for this visit.
+    }
+  }, [theme]);
+
   useEffect(() => save(SESSION_KEY, session), [session]);
   useEffect(() => save(TRANSCRIPT_KEY, transcript), [transcript]);
   useEffect(() => save(VIBE_KEY, vibe), [vibe]);
   useEffect(() => save(JOURNAL_KEY, journal), [journal]);
   useEffect(() => save(STASH_KEY, stash), [stash]);
+
+  // While signed in, push local changes up a couple of seconds after the user
+  // stops editing. Skipped when offline, when signed out, and while a server
+  // state is being applied (Step 4). "Sync now" in the Account tab covers the
+  // impatient path; sign-in covers the returning-device path.
+  useEffect(() => {
+    if (!user || !isOnline || applyingServerState.current) return;
+    const id = window.setTimeout(() => {
+      void syncNow('change');
+    }, 2000);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [journal, stash, session, vibe, theme, user, isOnline]);
 
   function deductFromStash(stashId: string, amount: number, unit: 'mg' | 'g'): void {
     setStash((items) =>
@@ -138,16 +196,115 @@ export default function App() {
     );
   }
 
+  const BREAK_KEY = 'bude-break-v1';
+
+  function readBreak(): SyncSettings['break'] {
+    try {
+      const raw = localStorage.getItem(BREAK_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as SyncSettings['break'];
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function currentSettings(): SyncSettings {
+    return {
+      theme,
+      experience: session.experience,
+      session,
+      vibe,
+      break: readBreak(),
+    };
+  }
+
+  function applyServerState(state: {
+    journal: JournalEntry[];
+    stash: StashItem[];
+    settings: SyncSettings | null;
+  }): void {
+    applyingServerState.current = true;
+    setJournal(state.journal);
+    setStash(state.stash);
+    if (state.settings) {
+      if (state.settings.theme && isThemeId(state.settings.theme)) {
+        setTheme(state.settings.theme);
+      }
+      if (state.settings.session) {
+        setSession({ ...DEFAULT_SESSION, ...state.settings.session });
+      }
+      if (state.settings.vibe) setVibe(state.settings.vibe);
+      try {
+        if (state.settings.break) {
+          localStorage.setItem(BREAK_KEY, JSON.stringify(state.settings.break));
+        } else {
+          localStorage.removeItem(BREAK_KEY);
+        }
+      } catch {
+        // Storage blocked — the break just won't carry over this time.
+      }
+    }
+    // Let the state settle before the change-sync effect runs again.
+    window.setTimeout(() => {
+      applyingServerState.current = false;
+    }, 500);
+  }
+
+  async function syncNow(reason: string): Promise<void> {
+    const currentUser = userRef.current;
+    if (!currentUser) return;
+    setSyncMessage('Syncing…');
+    try {
+      const state = await uploadLocal({ journal, stash }, currentSettings());
+      applyServerState(state);
+      setSyncMessage(`Synced just now${reason === 'signin' ? ' — your stuff from this device is now on your account.' : '.'}`);
+    } catch (err) {
+      setSyncMessage(err instanceof Error ? err.message : 'Sync did not work — try again.');
+    }
+  }
+
+  function handleAuthChange(next: AuthUser | null): void {
+    const wasSignedOut = user === null;
+    setUser(next);
+    if (next && wasSignedOut) {
+      // First sync for this session: push this device's local lists up, then
+      // take the merged server state as the source of truth.
+      void syncNow('signin');
+    }
+    if (!next) {
+      // Signed out: local data stays put as the offline cache. Nothing is wiped.
+      setSyncMessage('Signed out. Your stuff is still saved on this device.');
+    }
+  }
+
   function askAboutStrain(name: string): void {
     setPendingQuestion(`Tell me about ${name} — what kind of high is it, and what should I know?`);
     setTab('chat');
   }
 
+  function confirmAge(): void {
+    try {
+      localStorage.setItem(AGE_GATE_KEY, 'yes');
+    } catch {
+      // Storage blocked — still let them in for this visit.
+    }
+    setAgeDeclined(false);
+    setAgeConfirmed(true);
+  }
+
+  if (!ageConfirmed) {
+    return (
+      <AgeGate declined={ageDeclined} onConfirm={confirmAge} onDecline={() => setAgeDeclined(true)} />
+    );
+  }
+
   return (
     <div className="app">
+      <div className="garden-glow" aria-hidden />
       <header className="header">
         <h1>🌿 Stoner Bud-E</h1>
-        <p className="tagline">Your chill session buddy. No judgment, just good vibes.</p>
+        <p className="tagline">A calm buddy for the night you already started. Timers, straight answers, no lecture.</p>
         {source === 'live' && <span className="badge live">● Live AI</span>}
         {source === 'fallback' && <span className="badge offline">● Offline buddy</span>}
         {source === null && <span className="badge">Say hey to get started</span>}
@@ -161,6 +318,9 @@ export default function App() {
       )}
 
       <nav className="tabs" aria-label="Main tabs">
+        <button className={tab === 'tonight' ? 'tab active' : 'tab'} onClick={() => setTab('tonight')}>
+          🌙 Tonight
+        </button>
         <button className={tab === 'chat' ? 'tab active' : 'tab'} onClick={() => setTab('chat')}>
           💬 Chat
         </button>
@@ -185,8 +345,23 @@ export default function App() {
         <button className={tab === 'dose' ? 'tab active' : 'tab'} onClick={() => setTab('dose')}>
           ⚖️ Dose
         </button>
+        <button className={tab === 'settings' ? 'tab active' : 'tab'} onClick={() => setTab('settings')}>
+          ⚙️ Settings
+        </button>
+        <button className={tab === 'account' ? 'tab active' : 'tab'} onClick={() => setTab('account')}>
+          👤 Account
+        </button>
       </nav>
 
+      {tab === 'tonight' && (
+        <TonightTab
+          session={session}
+          vibe={vibe}
+          timerStatus={timerStatus}
+          onChat={() => setTab('chat')}
+          onTools={() => setTab('tools')}
+        />
+      )}
       {tab === 'chat' && (
         <ChatTab
           session={session}
@@ -218,12 +393,79 @@ export default function App() {
       {tab === 'stash' && <StashTab items={stash} onChange={setStash} />}
       {tab === 'break' && <BreakTab />}
       {tab === 'dose' && <DoseTab />}
+      {tab === 'settings' && <SettingsTab theme={theme} onTheme={setTheme} />}
+      {tab === 'account' && (
+        <AuthTab
+          user={user}
+          onAuthChange={handleAuthChange}
+          onSyncNow={() => void syncNow('manual')}
+          syncMessage={syncMessage}
+        />
+      )}
 
       <footer className="footer">
         21+ only. Bud-E is a buddy, not a doctor. Start low, go slow. Never drive high.
         <br />
         If a pet eats edibles, call a vet right away.
       </footer>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 21+ age gate — first open only. Plain words, no lecture.
+// ---------------------------------------------------------------------------
+
+function AgeGate({
+  declined,
+  onConfirm,
+  onDecline,
+}: {
+  declined: boolean;
+  onConfirm: () => void;
+  onDecline: () => void;
+}) {
+  return (
+    <div className="age-gate">
+      <div className="garden-glow" aria-hidden />
+      <div>
+        <div className="garden-hero">
+          <img src="/garden/leaf.jpg" alt="Green leaves in a calm night garden" />
+        </div>
+        <p className="eyebrow">21+ session companion</p>
+        <h1>Bud-E</h1>
+        <p className="muted" style={{ marginTop: 12, fontSize: '1.15rem', lineHeight: 1.4 }}>
+          A calm buddy for the night you already started. Timers, straight answers, no lecture.
+        </p>
+      </div>
+      <div>
+        {declined ? (
+          <>
+            <h2>This one is for adults.</h2>
+            <p className="muted">
+              Bud-E is only for people 21 and over. If that was a mis-tap, you can continue.
+            </p>
+            <button className="btn btn-block" onClick={onConfirm}>
+              I am 21 or older
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="muted">
+              Cannabis information for adults. Bud-E is not a doctor, not a shop, and not legal
+              advice. Start low, go slow. Never drive high.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 20 }}>
+              <button className="btn btn-block" onClick={onConfirm}>
+                I&apos;m 21 or older
+              </button>
+              <button className="btn secondary btn-block" onClick={onDecline}>
+                I&apos;m under 21
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

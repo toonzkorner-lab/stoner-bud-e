@@ -52,46 +52,57 @@ function StashRow(props: {
   }
 
   const runningLow = item.amount <= item.lowAt;
+  // Jar fill is a visual cue only: empty, low, or comfortably full.
+  const fillPct = item.amount <= 0 ? 0 : runningLow ? 22 : 65;
 
   return (
-    <div className="result-box">
-      <p>
-        <strong>{item.name}</strong> · {FORM_LABELS[item.form]}
-      </p>
-      <p>
-        {item.amount}
-        {item.unit}
-        {item.thcPct.trim() !== '' ? ` · ${item.thcPct.trim()}% THC` : ''}
-      </p>
-      {runningLow && <p>⚠️ Running low!</p>}
+    <div className="jar-wrap">
+      <div className="jar">
+        <div className="jar-lid" aria-hidden />
+        <div className="jar-body">
+          <div className="jar-fill" style={{ height: `${fillPct}%` }} aria-hidden />
+          <div className="jar-label">
+            <strong>{item.name}</strong>
+            <span className="muted small">{FORM_LABELS[item.form]}</span>
+            <span className="jar-amount">
+              {item.amount}
+              {item.unit}
+            </span>
+            {item.thcPct.trim() !== '' && <span className="muted small">{item.thcPct.trim()}% THC</span>}
+            {runningLow && <span>⚠️ Running low!</span>}
+          </div>
+        </div>
+      </div>
       {item.lowAt > 0 && (
-        <p className="muted small">
+        <p className="muted small" style={{ margin: '6px 0 0', textAlign: 'center' }}>
           Warns under {item.lowAt}
           {item.unit}
         </p>
       )}
-      <div className="field-row">
-        <button type="button" className="btn secondary" onClick={() => bump(-step)}>
-          −
-        </button>
-        <input
-          type="text"
-          inputMode="decimal"
-          aria-label={`Amount of ${item.name}`}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-        <button type="button" className="btn secondary" onClick={() => bump(step)}>
-          +
-        </button>
-      </div>
-      <div className="button-row">
-        <button type="button" className="btn secondary" onClick={saveDraft}>
-          Save amount
-        </button>
-        <button type="button" className="btn danger" onClick={deleteItem}>
-          Delete
-        </button>
+      <div className="jar-controls">
+        <div className="field-row">
+          <button type="button" className="jar-step" aria-label={`Take ${step}${item.unit} out of ${item.name}`} onClick={() => bump(-step)}>
+            −
+          </button>
+          <input
+            type="text"
+            inputMode="decimal"
+            aria-label={`Amount of ${item.name}`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <button type="button" className="jar-step" aria-label={`Add ${step}${item.unit} to ${item.name}`} onClick={() => bump(step)}>
+            +
+          </button>
+        </div>
+        <div className="button-row" style={{ marginTop: 8 }}>
+          <button type="button" className="btn secondary" onClick={saveDraft}>
+            Save
+          </button>
+          <button type="button" className="btn danger" onClick={deleteItem}>
+            Delete
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -234,17 +245,23 @@ export default function StashTab(props: {
 
       <div className="card">
         <h2>Your stash</h2>
+        <p className="muted small">Jars on the shelf — same stash, same amounts, just easier to see.</p>
         {items.length === 0 ? (
           <p className="muted">Nothing in the stash yet. Add your first item above.</p>
         ) : (
-          items.map((item) => (
-            <StashRow
-              key={item.id}
-              item={item}
-              onUpdate={updateItem}
-              onDelete={deleteItem}
-            />
-          ))
+          <>
+            <div className="jar-shelf">
+              {items.map((item) => (
+                <StashRow
+                  key={item.id}
+                  item={item}
+                  onUpdate={updateItem}
+                  onDelete={deleteItem}
+                />
+              ))}
+            </div>
+            <div className="jar-shelf-board" aria-hidden />
+          </>
         )}
       </div>
     </div>
