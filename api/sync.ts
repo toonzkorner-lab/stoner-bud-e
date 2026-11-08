@@ -12,11 +12,17 @@
 // with the server's current time). Chat is never synced — the transcript
 // stays on the device only.
 //
-// Known gap (by design, see INTEGRATION.md): deletions do NOT sync yet. A
-// journal entry or stash item deleted locally stays on the server and comes
-// back on the next download. The follow-up is tombstones or a delete
-// endpoint — NOT silent delete-missing, which would wipe a new device's
-// empty first upload.
+// Deletions sync as tombstones (table `deleted_items`, migration 0003): the
+// client sends `deleted: [{kind, id, deletedAt}]`; the server stores the
+// tombstone, deletes the matching row when the tombstone wins, and returns
+// all tombstones so every device drops the item locally. Tombstone rule: a
+// tombstone wins when its deleted_at is >= the item's updated_at; otherwise
+// the newer update wins and the tombstone is dropped. An upload is never
+// allowed to resurrect a tombstoned item whose deleted_at is >= the
+// incoming updated_at — that is what stops a stale offline device from
+// bringing a deleted item back. Deletions are NEVER inferred from rows
+// missing in an upload: a new device's empty first upload must not wipe
+// the account (see INTEGRATION.md).
 
 import { getPool, getSessionUser } from '../src/lib/auth-server.ts';
 import { isPreflight, readJsonBody, setCorsHeaders } from '../src/lib/cors.ts';
@@ -31,14 +37,54 @@ import type { Pool, PoolClient } from 'pg';
 // in step if either changes.
 type SyncedRecord = Record<string, unknown> & { updatedAt: string };
 
+interface Tombstone {
+  kind: 'journal' | 'stash';
+  id: string;
+  deletedAt: string;
+}
+
 interface ApiServerState {
   journal: SyncedRecord[];
   stash: SyncedRecord[];
   settings: (Record<string, unknown> & { updatedAt: string }) | null;
+  deleted: Tombstone[];
 }
 
 const MAX_JOURNAL = 500;
 const MAX_STASH = 200;
+const MAX_DELETED = 500;
+
+// The deleted_items DDL, kept identical to migrations/0003_deleted_items.sql
+// (the single source of truth). ensureDeletedItemsTable runs it as
+// CREATE TABLE IF NOT EXISTS on first use: migrations are normally applied
+// via the Neon SQL Editor / scripts/setup-db.mjs, but sync must not 500
+// when the table is not there yet — and once the migration is applied this
+// is a no-op. Never logs or returns anything sensitive.
+const DELETED_ITEMS_DDL = `create table if not exists deleted_items (
+  id uuid not null primary key default gen_random_uuid(),
+  user_id text not null references "user" ("id") on delete cascade,
+  kind text not null check (kind in ('journal', 'stash')),
+  item_id text not null,
+  deleted_at timestamptz not null default CURRENT_TIMESTAMP,
+  unique (user_id, kind, item_id)
+);
+create index if not exists deleted_items_user_id_idx on deleted_items (user_id)`;
+
+let deletedItemsEnsured = false;
+
+/** Idempotent: create the tombstone table if the migration has not landed
+ *  yet. Best-effort — a failure here leaves the flag unset, and the
+ *  following queries will surface the real error as sync_failed. */
+async function ensureDeletedItemsTable(pool: Pool): Promise<void> {
+  if (deletedItemsEnsured) return;
+  try {
+    await pool.query(DELETED_ITEMS_DDL);
+    deletedItemsEnsured = true;
+  } catch {
+    // Table may already exist (concurrent create) or the DB is down; the
+    // caller's queries decide what happens next — do not fail the sync here.
+  }
+}
 
 type Req = ReqLike & { on?: unknown };
 type Res = ResLike & { headersSent?: boolean };
@@ -53,6 +99,13 @@ interface SyncBody {
   journal?: unknown;
   stash?: unknown;
   settings?: unknown;
+  deleted?: unknown;
+}
+
+interface IncomingTombstone {
+  kind: 'journal' | 'stash';
+  id: string;
+  deletedAt: Date | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -82,6 +135,21 @@ function cleanItems(raw: unknown, limit: number): IncomingItem[] | null {
 
 const THEMES = new Set(['night', 'day', 'ember', 'moon']);
 const EXPERIENCES = new Set(['new', 'some', 'experienced']);
+
+/** Validate an uploaded tombstone list. Returns null when malformed. */
+function cleanDeleted(raw: unknown): IncomingTombstone[] | null {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw) || raw.length > MAX_DELETED) return null;
+  const tombstones: IncomingTombstone[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry)) return null;
+    const kind = entry.kind;
+    if (kind !== 'journal' && kind !== 'stash') return null;
+    if (typeof entry.id !== 'string' || entry.id === '' || entry.id.length > 128) return null;
+    tombstones.push({ kind, id: entry.id, deletedAt: parseUpdatedAt(entry.deletedAt) });
+  }
+  return tombstones;
+}
 
 /** Validate settings: only known keys are kept, everything else is dropped.
  *  Returns undefined when nothing was sent (skip the upsert), null when the
@@ -129,6 +197,10 @@ async function readState(client: Pool | PoolClient, userId: string): Promise<Api
     'select data, updated_at from user_settings where user_id = $1',
     [userId],
   );
+  const deletedRes = await client.query<Row>(
+    'select kind, item_id, deleted_at from deleted_items where user_id = $1 order by deleted_at asc',
+    [userId],
+  );
   const journal: SyncedRecord[] = journalRes.rows.map(
     (r) => ({ ...(r.data as object), updatedAt: toIso(r.updated_at) }) as SyncedRecord,
   );
@@ -142,7 +214,12 @@ async function readState(client: Pool | PoolClient, userId: string): Promise<Api
         updatedAt: toIso(settingsRow.updated_at),
       } as ApiServerState['settings'])
     : null;
-  return { journal, stash, settings };
+  const deleted: Tombstone[] = deletedRes.rows.map((r) => ({
+    kind: r.kind as 'journal' | 'stash',
+    id: String(r.item_id),
+    deletedAt: toIso(r.deleted_at as Date | string),
+  }));
+  return { journal, stash, settings, deleted };
 }
 
 export default async function handler(req: Req, res: Res): Promise<void> {
@@ -172,6 +249,7 @@ export default async function handler(req: Req, res: Res): Promise<void> {
 
     const pool = getPool();
     if (req.method === 'GET') {
+      await ensureDeletedItemsTable(pool);
       const state = await readState(pool, user.id);
   res.status(200).json({ ok: true, ...state });
       return;
@@ -182,33 +260,78 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     const journal = cleanItems(body.journal, MAX_JOURNAL);
     const stash = cleanItems(body.stash, MAX_STASH);
     const settings = cleanSettings(body.settings);
-    if (journal === null || stash === null || settings === null) {
+    const deleted = cleanDeleted(body.deleted);
+    if (journal === null || stash === null || settings === null || deleted === null) {
       res.status(400).json({ ok: false, error: 'bad_sync_body' });
       return;
     }
 
+    await ensureDeletedItemsTable(pool);
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // Tombstones first, so the upserts below cannot resurrect them.
+      // Rule: a tombstone wins when deleted_at >= the item's updated_at;
+      // otherwise the newer update wins and the tombstone is dropped.
+      for (const tomb of deleted) {
+        const deletedAt = tomb.deletedAt ?? new Date();
+        const table = tomb.kind === 'journal' ? 'journal_entries' : 'stash_items';
+        // Keep the FIRST delete time when the tombstone already exists.
+        await client.query(
+          `insert into deleted_items (user_id, kind, item_id, deleted_at)
+           values ($1, $2, $3, $4)
+           on conflict (user_id, kind, item_id) do nothing`,
+          [user.id, tomb.kind, tomb.id, deletedAt],
+        );
+        // Tombstone wins: drop the row when it is not newer than the delete.
+        await client.query(
+          `delete from ${table} where user_id = $1 and id = $2 and updated_at <= $3`,
+          [user.id, tomb.id, deletedAt],
+        );
+        // Newer update wins: the row survived, so the tombstone is stale.
+        await client.query(
+          `delete from deleted_items
+           where user_id = $1 and kind = $2 and item_id = $3
+             and exists (
+               select 1 from ${table}
+               where user_id = $1 and id = $3 and updated_at > $4
+             )`,
+          [user.id, tomb.kind, tomb.id, deletedAt],
+        );
+      }
       for (const item of journal) {
+        const updatedAt = item.updatedAt ?? new Date();
         // Server-wins: only overwrite when the incoming copy is strictly newer.
+        // The tombstone guard stops a stale offline device re-uploading an
+        // item another device already deleted (deleted_at >= updated_at).
         await client.query(
           `insert into journal_entries (user_id, id, data, updated_at)
-           values ($1, $2, $3, $4)
+           select $1, $2, $3, $4
+           where not exists (
+             select 1 from deleted_items
+             where user_id = $1 and kind = 'journal' and item_id = $2
+               and deleted_at >= $4
+           )
            on conflict (user_id, id) do update
              set data = excluded.data, updated_at = excluded.updated_at
              where journal_entries.updated_at < excluded.updated_at`,
-          [user.id, item.id, item.data, item.updatedAt ?? new Date()],
+          [user.id, item.id, item.data, updatedAt],
         );
       }
       for (const item of stash) {
+        const updatedAt = item.updatedAt ?? new Date();
         await client.query(
           `insert into stash_items (user_id, id, data, updated_at)
-           values ($1, $2, $3, $4)
+           select $1, $2, $3, $4
+           where not exists (
+             select 1 from deleted_items
+             where user_id = $1 and kind = 'stash' and item_id = $2
+               and deleted_at >= $4
+           )
            on conflict (user_id, id) do update
              set data = excluded.data, updated_at = excluded.updated_at
              where stash_items.updated_at < excluded.updated_at`,
-          [user.id, item.id, item.data, item.updatedAt ?? new Date()],
+          [user.id, item.id, item.data, updatedAt],
         );
       }
       if (settings !== undefined) {

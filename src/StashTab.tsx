@@ -111,8 +111,10 @@ function StashRow(props: {
 export default function StashTab(props: {
   items: StashItem[];
   onChange: (items: StashItem[]) => void;
+  /** Called when an item is deleted, so the delete can sync (tombstone). */
+  onDelete?: (id: string) => void;
 }) {
-  const { items, onChange } = props;
+  const { items, onChange, onDelete } = props;
 
   const [name, setName] = useState('');
   const [form, setForm] = useState<StashForm>('flower');
@@ -155,6 +157,7 @@ export default function StashTab(props: {
   }
 
   function deleteItem(id: string): void {
+    onDelete?.(id);
     onChange(items.filter((i) => i.id !== id));
   }
 

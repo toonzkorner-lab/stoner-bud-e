@@ -18,6 +18,21 @@
 //   as the oldest — uploadLocal stamps those on first sync.
 // - After a successful upload or download, the server state is the source of
 //   truth: App.tsx replaces its local lists with what the server returned.
+//
+// Deletions sync as tombstones (table `deleted_items`, migration 0003):
+// - When the user deletes a journal entry or stash item, App.tsx calls
+//   queueDeletion() — the deletion is stored in localStorage
+//   (`bude-deleted-queue-v1`) so it survives restarts and signed-out use,
+//   and uploadLocal() sends the whole queue on the next sync. The server
+//   stores the tombstones, deletes the matching rows, and returns every
+//   tombstone; the queue entries the server confirms are then cleared.
+// - Incoming tombstones are applied locally too: filterTombstoned() drops
+//   any local item a tombstone covers, so a tombstoned item is never
+//   re-uploaded. A local tombstone cache (`bude-sync-tombstones-v1`) keeps
+//   the last server tombstone list between syncs.
+// - Tombstone rule (same on both sides): a tombstone wins when its
+//   deletedAt is >= the item's updatedAt; otherwise the newer update wins.
+//   An item with no updatedAt counts as the oldest, so the tombstone wins.
 
 import { authedFetch } from './auth-client.ts';
 import type { JournalEntry } from '../journal.ts';
@@ -60,10 +75,17 @@ export interface SyncSettings {
   updatedAt?: string;
 }
 
+export interface Tombstone {
+  kind: 'journal' | 'stash';
+  id: string;
+  deletedAt: string;
+}
+
 export interface ServerState {
   journal: SyncedJournalEntry[];
   stash: SyncedStashItem[];
   settings: SyncSettings | null;
+  deleted: Tombstone[];
 }
 
 export interface LocalState {
@@ -116,6 +138,118 @@ function saveSnapshot(state: ServerState): void {
   } catch {
     // Storage blocked — sync still works, it just re-stamps on next upload.
   }
+}
+
+// --- Delete queue + tombstone cache (localStorage, survives restarts) ---
+
+const DELETE_QUEUE_KEY = 'bude-deleted-queue-v1';
+const TOMBSTONE_CACHE_KEY = 'bude-sync-tombstones-v1';
+
+function loadDeleteQueue(): Tombstone[] {
+  try {
+    const raw = localStorage.getItem(DELETE_QUEUE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (t): t is Tombstone =>
+        !!t &&
+        typeof t === 'object' &&
+        ((t as Tombstone).kind === 'journal' || (t as Tombstone).kind === 'stash') &&
+        typeof (t as Tombstone).id === 'string' &&
+        typeof (t as Tombstone).deletedAt === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveDeleteQueue(queue: Tombstone[]): void {
+  try {
+    localStorage.setItem(DELETE_QUEUE_KEY, JSON.stringify(queue));
+  } catch {
+    // Storage blocked — the delete just won't sync this time.
+  }
+}
+
+/**
+ * Remember a deletion for the next sync. Call this whenever the user deletes
+ * a journal entry or stash item — signed in or not. Queued deletions are
+ * sent on the first sync after sign-in, so a delete made while signed out
+ * cannot resurrect from the server. A repeat delete keeps the FIRST time.
+ */
+export function queueDeletion(kind: 'journal' | 'stash', id: string): void {
+  const queue = loadDeleteQueue();
+  if (queue.some((t) => t.kind === kind && t.id === id)) return;
+  queue.push({ kind, id, deletedAt: new Date().toISOString() });
+  saveDeleteQueue(queue);
+}
+
+/** Drop queue entries the server has confirmed (they are in its tombstones). */
+function clearConfirmedDeletions(serverDeleted: Tombstone[]): void {
+  const queue = loadDeleteQueue();
+  if (queue.length === 0) return;
+  const confirmed = new Set(serverDeleted.map((t) => `${t.kind}:${t.id}`));
+  const remaining = queue.filter((t) => !confirmed.has(`${t.kind}:${t.id}`));
+  if (remaining.length !== queue.length) saveDeleteQueue(remaining);
+}
+
+function loadTombstoneCache(): Tombstone[] {
+  try {
+    const raw = localStorage.getItem(TOMBSTONE_CACHE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (t): t is Tombstone =>
+        !!t &&
+        typeof t === 'object' &&
+        ((t as Tombstone).kind === 'journal' || (t as Tombstone).kind === 'stash') &&
+        typeof (t as Tombstone).id === 'string' &&
+        typeof (t as Tombstone).deletedAt === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveTombstoneCache(tombstones: Tombstone[]): void {
+  try {
+    const byKey = new Map<string, Tombstone>();
+    for (const t of [...loadTombstoneCache(), ...tombstones]) {
+      const key = `${t.kind}:${t.id}`;
+      const existing = byKey.get(key);
+      // Keep the earliest delete time when the same item is tombstoned twice.
+      if (!existing || Date.parse(t.deletedAt) < Date.parse(existing.deletedAt)) {
+        byKey.set(key, t);
+      }
+    }
+    localStorage.setItem(TOMBSTONE_CACHE_KEY, JSON.stringify([...byKey.values()]));
+  } catch {
+    // Storage blocked — the server still enforces tombstones on its side.
+  }
+}
+
+/**
+ * Drop local items a tombstone covers. A tombstone wins when its deletedAt
+ * is >= the item's updatedAt; an item with no updatedAt counts as oldest,
+ * so the tombstone wins. Returns the filtered list (same order).
+ */
+export function filterTombstoned<T extends { id: string; updatedAt?: string }>(
+  items: T[],
+  kind: 'journal' | 'stash',
+  tombstones: Tombstone[],
+): T[] {
+  const byId = new Map(
+    tombstones.filter((t) => t.kind === kind).map((t) => [t.id, Date.parse(t.deletedAt)]),
+  );
+  if (byId.size === 0) return items;
+  return items.filter((item) => {
+    const deletedAt = byId.get(item.id);
+    if (deletedAt === undefined || Number.isNaN(deletedAt)) return true;
+    const updatedAt = item.updatedAt ? Date.parse(item.updatedAt) : 0;
+    return !Number.isNaN(updatedAt) && updatedAt > deletedAt;
+  });
 }
 
 function stampIfChanged<T extends { id: string; updatedAt?: string }>(
@@ -181,8 +315,20 @@ async function readState(res: Response): Promise<ServerState> {
   const stash = Array.isArray(state.stash) ? state.stash : [];
   const settings =
     state.settings && typeof state.settings === 'object' ? state.settings : null;
-  const merged: ServerState = { journal, stash, settings };
+  const deleted = Array.isArray(state.deleted)
+    ? (state.deleted as unknown[]).filter(
+        (t): t is Tombstone =>
+          !!t &&
+          typeof t === 'object' &&
+          ((t as Tombstone).kind === 'journal' || (t as Tombstone).kind === 'stash') &&
+          typeof (t as Tombstone).id === 'string' &&
+          typeof (t as Tombstone).deletedAt === 'string',
+      )
+    : [];
+  const merged: ServerState = { journal, stash, settings, deleted };
   saveSnapshot(merged);
+  saveTombstoneCache(deleted);
+  clearConfirmedDeletions(deleted);
   return merged;
 }
 
@@ -191,6 +337,8 @@ async function readState(res: Response): Promise<ServerState> {
  * state (the source of truth — App.tsx should replace its local lists with
  * this). Items changed since the last sync get a fresh updatedAt; unchanged
  * items keep theirs, so an older device cannot clobber a newer server row.
+ * Queued deletions go up with the upload, and any local item a known
+ * tombstone covers is left out — a tombstoned item is never re-uploaded.
  */
 export async function uploadLocal(
   local: LocalState,
@@ -198,8 +346,17 @@ export async function uploadLocal(
 ): Promise<ServerState> {
   const now = new Date().toISOString();
   const snapshot = loadSnapshot();
-  const journal = stampIfChanged(local.journal, snapshot.journal, now);
-  const stash = stampIfChanged(local.stash, snapshot.stash, now);
+  const tombstones = loadTombstoneCache();
+  const journal = stampIfChanged(
+    filterTombstoned(local.journal, 'journal', tombstones),
+    snapshot.journal,
+    now,
+  );
+  const stash = stampIfChanged(
+    filterTombstoned(local.stash, 'stash', tombstones),
+    snapshot.stash,
+    now,
+  );
   const stampedSettings =
     settings === null
       ? null
@@ -210,7 +367,12 @@ export async function uploadLocal(
         : { ...settings, updatedAt: now };
   const res = await authedFetch('/api/sync', {
     method: 'POST',
-    body: JSON.stringify({ journal, stash, settings: stampedSettings }),
+    body: JSON.stringify({
+      journal,
+      stash,
+      settings: stampedSettings,
+      deleted: loadDeleteQueue(),
+    }),
   });
   return readState(res);
 }

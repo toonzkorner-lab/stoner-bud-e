@@ -40,11 +40,17 @@ device only, by design. Nothing in this guide uploads it.
   truth**: replace the local lists with what the server returned.
 - localStorage stays the offline cache. Offline edits sync on the next upload
   (sign-in, "Sync now", or the debounced change effect below).
-- **Known gap — deletions do not sync yet.** A journal entry or stash item
-  deleted locally stays on the server and comes back on the next download.
-  The follow-up is tombstones or a delete endpoint. Do NOT "fix" this by
-  deleting server rows missing from an upload — a new device's empty first
-  upload would wipe the account.
+- **Deletions sync as tombstones** (table `deleted_items`, migration 0003).
+  When the user deletes a journal entry or stash item, App.tsx calls
+  `queueDeletion()` — the delete is stored in localStorage
+  (`bude-deleted-queue-v1`) and sent on the next sync, signed in or not
+  (queued while signed out, sent on the first sync after sign-in). The
+  server stores the tombstone, deletes the matching row when the tombstone
+  wins, and returns all tombstones so every device drops the item. Rule: a
+  tombstone wins when `deleted_at >= updated_at`; otherwise the newer update
+  wins and the tombstone is dropped. An upload never resurrects a tombstoned
+  item. Do NOT "fix" deletes by deleting server rows missing from an upload
+  — a new device's empty first upload would wipe the account.
 
 ## Step 1 — imports
 
