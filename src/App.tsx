@@ -17,6 +17,25 @@ const TRANSCRIPT_KEY = 'bude-transcript-v1';
 const SESSION_KEY = 'bude-session-v1';
 const VIBE_KEY = 'bude-vibe-v1';
 
+// Where live AI lives. On plain web the API is same-origin, so a relative
+// path is right. Inside the Capacitor APK the app runs from a local origin
+// (capacitor://localhost) with no server, so a relative path would go
+// nowhere — point it at the live Vercel deployment instead. A build-time
+// VITE_API_URL override wins over both.
+const LIVE_ORIGIN = 'https://stoner-bud-e-toonzkorner-9149s-projects.vercel.app';
+
+function apiUrl(): string {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (typeof envUrl === 'string' && envUrl.trim() !== '') {
+    return `${envUrl.replace(/\/$/, '')}/api/chat`;
+  }
+  const isCapacitor =
+    typeof window !== 'undefined' &&
+    (window as unknown as { Capacitor?: unknown }).Capacitor !== undefined;
+  if (isCapacitor) return `${LIVE_ORIGIN}/api/chat`;
+  return '/api/chat';
+}
+
 type Tab = 'chat' | 'tools' | 'plan';
 type Source = 'live' | 'fallback' | null;
 
@@ -241,7 +260,7 @@ function ChatTab({
     setInput('');
     setSending(true);
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch(apiUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: next.slice(-12), session }),
