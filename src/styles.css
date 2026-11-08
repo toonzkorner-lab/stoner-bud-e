@@ -648,6 +648,19 @@ button {
   margin-bottom: 4px;
 }
 
+.chat-sources {
+  display: block;
+  margin-top: 8px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
+.chat-sources a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .chat-input-row {
   display: flex;
   gap: 8px;

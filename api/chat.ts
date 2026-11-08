@@ -15,16 +15,48 @@ const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 // gpt-oss-120b (for the 70B) and gpt-oss-20b (for the 8B).
 const GROQ_MODELS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'] as const;
 
+// Web search: groq/compound was shut down 2026-09-21 (same deprecations
+// page). Search now lives on the gpt-oss models as the built-in
+// `browser_search` tool — Groq runs it server-side and returns the final
+// answer plus executed_tools with the sources. No extra key needed.
+const SEARCH_TOOL = { type: 'browser_search' } as const;
+
+interface SourceLink {
+  title: string;
+  url: string;
+}
+
 interface GroqChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
 }
 
+interface GroqSearchResult {
+  title?: unknown;
+  url?: unknown;
+}
+
+interface GroqExecutedTool {
+  type?: unknown;
+  search_results?: { results?: GroqSearchResult[] };
+  results?: GroqSearchResult[];
+}
+
+interface GroqMessage {
+  content?: string | null;
+  executed_tools?: GroqExecutedTool[];
+}
+
 interface GroqResponse {
   choices?: Array<{
-    message?: { content?: string | null };
+    message?: GroqMessage;
   }>;
 }
+
+// Words that mean "this needs today's information, not training data".
+// When the last user message matches, the search tool is forced on.
+const CURRENT_INFO_RE =
+  /\b(today|tonight|now|current|latest|news|weather|forecast|score|scores|won|winning|price|prices|open now|hours|release|released|update|yesterday|this week|this month|2026|who won|what happened|happening)\b/i;
 
 type Body = {
   messages?: ChatMessage[];
@@ -100,35 +132,83 @@ function sessionLine(session: Partial<Session> | undefined, journal?: string): s
   return `${base}${journalBit}`;
 }
 
+/** Pull web sources out of Groq's executed_tools (defensive: shape varies). */
+function extractSources(message: GroqMessage | undefined): SourceLink[] {
+  const out: SourceLink[] = [];
+  const seen = new Set<string>();
+  const tools = message?.executed_tools;
+  if (!Array.isArray(tools)) return out;
+  for (const tool of tools) {
+    const results: unknown[] = Array.isArray(tool?.search_results?.results)
+      ? tool.search_results.results
+      : Array.isArray(tool?.results)
+        ? tool.results
+        : [];
+    for (const r of results) {
+      const rec = r as GroqSearchResult;
+      const url = typeof rec?.url === 'string' ? rec.url : '';
+      const title =
+        typeof rec?.title === 'string' && rec.title.trim() !== '' ? rec.title.trim() : url;
+      if (url.startsWith('http') && !seen.has(url)) {
+        seen.add(url);
+        out.push({ title, url });
+      }
+      if (out.length >= 4) return out;
+    }
+  }
+  return out;
+}
+
+function cleanReply(text: string): string {
+  // Groq returns inline citation markers like 【2‡L6-L10】; the client shows
+  // real source links instead, so drop the markers from the text.
+  return text
+    .replace(/【[^】]*】/g, '')
+    .replace(/ {2,}/g, ' ')
+    .trim();
+}
+
 async function callGroq(
   apiKey: string,
   model: string,
   messages: GroqChatMessage[],
-): Promise<string | null> {
+  useSearch: boolean,
+  forceSearch: boolean,
+): Promise<{ reply: string; sources: SourceLink[] } | null> {
+  const body: Record<string, unknown> = {
+    model,
+    messages,
+    temperature: 0.9,
+    max_tokens: 800,
+  };
+  if (useSearch) {
+    body.tools = [SEARCH_TOOL];
+    body.tool_choice = forceSearch ? 'required' : 'auto';
+  }
+
   const groqRes = await fetch(GROQ_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: 0.9,
-      max_tokens: 600,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!groqRes.ok) {
     // Log status only (never the key or body) so a dead model/key shows
     // up in Vercel runtime logs instead of failing silently to fallback.
-    console.error(`[bud-e chat] Groq ${model} HTTP ${groqRes.status}`);
+    console.error(
+      `[bud-e chat] Groq ${model} HTTP ${groqRes.status}${useSearch ? ' (search on)' : ''}`,
+    );
     return null;
   }
 
   const data = (await groqRes.json()) as GroqResponse;
-  const reply = data.choices?.[0]?.message?.content?.trim();
-  return reply ? reply : null;
+  const msg = data.choices?.[0]?.message;
+  const raw = msg?.content?.trim();
+  if (!raw) return null;
+  return { reply: cleanReply(raw), sources: extractSources(msg) };
 }
 
 export default async function handler(req: ReqLike, res: ResLike): Promise<void> {
@@ -167,17 +247,32 @@ export default async function handler(req: ReqLike, res: ResLike): Promise<void>
       })),
     ];
 
-    let reply: string | null = null;
+    const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+    const forceSearch = lastUser ? CURRENT_INFO_RE.test(lastUser.text) : false;
+
+    // Search-capable calls first (both models), so a question about today
+    // gets real web results when Groq can search.
+    let result: { reply: string; sources: SourceLink[] } | null = null;
     for (const model of GROQ_MODELS) {
-      reply = await callGroq(apiKey, model, groqMessages);
-      if (reply) break;
+      result = await callGroq(apiKey, model, groqMessages, true, forceSearch);
+      if (result) break;
     }
-    if (!reply) {
+    // If the search-capable calls failed (tool unsupported on this tier,
+    // search outage, ...), retry plain before giving up on live AI.
+    if (!result) {
+      result = await callGroq(apiKey, GROQ_MODELS[0], groqMessages, false, false);
+    }
+    if (!result) {
       fallback(res);
       return;
     }
 
-    res.status(200).json({ ok: true, source: 'live', reply });
+    res.status(200).json({
+      ok: true,
+      source: 'live',
+      reply: result.reply,
+      ...(result.sources.length > 0 ? { sources: result.sources } : {}),
+    });
   } catch {
     // Any surprise at all: degrade to fallback, never a 500.
     try {

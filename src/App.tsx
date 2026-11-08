@@ -41,7 +41,7 @@ import type { JournalEntry } from './journal';
 import { STASH_KEY } from './stash';
 import type { StashItem } from './stash';
 import AuthTab from './AuthTab';
-import { uploadLocal } from './lib/sync';
+import { queueDeletion, uploadLocal } from './lib/sync';
 import type { SyncSettings } from './lib/sync';
 import { getSession } from './lib/auth-client';
 import type { AuthUser } from './lib/auth-client';
@@ -465,13 +465,24 @@ export default function App() {
           key={`${session.method}-${session.amount}-${session.timeTaken}`}
           entries={journal}
           onAdd={(e) => setJournal((j) => [e, ...j])}
-          onDelete={(id) => setJournal((j) => j.filter((e) => e.id !== id))}
+          onDelete={(id) => {
+            // Queue the tombstone first: the delete must sync even if the
+            // user signs out or closes the app before the next upload.
+            queueDeletion('journal', id);
+            setJournal((j) => j.filter((e) => e.id !== id));
+          }}
           session={session}
           stash={stash}
           onDeduct={deductFromStash}
         />
       )}
-      {tab === 'stash' && <StashTab items={stash} onChange={setStash} />}
+      {tab === 'stash' && (
+        <StashTab
+          items={stash}
+          onChange={setStash}
+          onDelete={(id) => queueDeletion('stash', id)}
+        />
+      )}
       {tab === 'break' && <BreakTab />}
       {tab === 'dose' && <DoseTab />}
       {tab === 'settings' && <SettingsTab theme={theme} onTheme={setTheme} />}
@@ -762,8 +773,26 @@ function ChatTab({
         data && typeof data === 'object' && 'source' in data
           ? (data as { source?: unknown }).source
           : undefined;
+      const sources =
+        data && typeof data === 'object' && 'sources' in data
+          ? (data as { sources?: unknown }).sources
+          : undefined;
       if (typeof reply === 'string' && reply.trim() !== '') {
-        setTranscript([...next, { role: 'bud', text: reply }]);
+        const budMsg: ChatMessage = { role: 'bud', text: reply };
+        if (Array.isArray(sources)) {
+          const clean = sources
+            .filter(
+              (s): s is { title: string; url: string } =>
+                !!s && typeof s === 'object' && typeof (s as { url?: unknown }).url === 'string',
+            )
+            .map((s) => ({
+              title:
+                typeof s.title === 'string' && s.title.trim() !== '' ? s.title : s.url,
+              url: s.url,
+            }));
+          if (clean.length > 0) budMsg.sources = clean;
+        }
+        setTranscript([...next, budMsg]);
         setSource(src === 'live' ? 'live' : 'fallback');
       } else {
         throw new Error('no live reply');
@@ -801,6 +830,19 @@ function ChatTab({
             <div key={i} className={m.role === 'user' ? 'msg user' : 'msg bud'}>
               <span className="who">{m.role === 'user' ? 'You' : 'Bud-E'}</span>
               {m.text}
+              {m.role === 'bud' && m.sources && m.sources.length > 0 && (
+                <span className="chat-sources">
+                  Sources:{' '}
+                  {m.sources.map((s, j) => (
+                    <span key={j}>
+                      {j > 0 ? ' · ' : ''}
+                      <a href={s.url} target="_blank" rel="noreferrer">
+                        {s.title}
+                      </a>
+                    </span>
+                  ))}
+                </span>
+              )}
             </div>
           ))}
           {sending && (
