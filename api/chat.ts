@@ -34,6 +34,7 @@ type Body = {
 type ReqLike = {
   method?: string;
   body?: unknown;
+  headers?: Record<string, string | string[] | undefined>;
 };
 
 type ResLike = {
@@ -41,6 +42,32 @@ type ResLike = {
   json: (body: unknown) => void;
   setHeader: (name: string, value: string) => void;
 };
+
+// CORS: the Capacitor APK calls this API cross-origin from its local origin
+// (capacitor://localhost / https://localhost). Only reflect an origin we
+// recognize; everything else gets no Access-Control-Allow-Origin and the
+// browser blocks the read. The live web app is same-origin and needs no CORS.
+const ALLOWED_ORIGINS = new Set([
+  'https://stoner-bud-e-toonzkorner-9149s-projects.vercel.app',
+  'capacitor://localhost',
+  'ionic://localhost',
+  'https://localhost',
+  'http://localhost',
+]);
+
+function corsOrigin(req: ReqLike): string | null {
+  const raw = req.headers?.origin;
+  const origin = Array.isArray(raw) ? raw[0] : raw;
+  return origin && ALLOWED_ORIGINS.has(origin) ? origin : null;
+}
+
+function setCorsHeaders(req: ReqLike, res: ResLike): void {
+  const origin = corsOrigin(req);
+  if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Vary', 'Origin');
+}
 
 function fallback(res: ResLike): void {
   res.status(200).json({ ok: true, source: 'fallback', reply: null });
@@ -71,6 +98,12 @@ function sessionLine(session: Partial<Session> | undefined): string {
 export default async function handler(req: ReqLike, res: ResLike): Promise<void> {
   try {
     res.setHeader('Content-Type', 'application/json');
+    setCorsHeaders(req, res);
+    if (req.method === 'OPTIONS') {
+      // CORS preflight from the APK — no body, just the headers above.
+      res.status(200).json({ ok: true });
+      return;
+    }
     if (req.method !== 'POST') {
       res.status(200).json({ ok: true, source: 'fallback', reply: null });
       return;
