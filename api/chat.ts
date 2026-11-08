@@ -29,6 +29,7 @@ interface GeminiResponse {
 type Body = {
   messages?: ChatMessage[];
   session?: Partial<Session>;
+  journal?: string;
 };
 
 type ReqLike = {
@@ -85,14 +86,18 @@ function parseBody(raw: unknown): Body {
   return {};
 }
 
-function sessionLine(session: Partial<Session> | undefined): string {
-  if (!session) return 'No session details were given.';
+function sessionLine(session: Partial<Session> | undefined, journal?: string): string {
   const bits: string[] = [];
-  if (session.method) bits.push(`method: ${session.method}`);
-  if (session.amount) bits.push(`amount: ${session.amount}${session.unit ?? 'mg'}`);
-  if (session.timeTaken) bits.push(`time taken: ${session.timeTaken}`);
-  if (session.experience) bits.push(`experience: ${session.experience}`);
-  return bits.length > 0 ? `Tonight's session — ${bits.join(', ')}.` : 'No session details were given.';
+  if (session) {
+    if (session.method) bits.push(`method: ${session.method}`);
+    if (session.amount) bits.push(`amount: ${session.amount}${session.unit ?? 'mg'}`);
+    if (session.timeTaken) bits.push(`time taken: ${session.timeTaken}`);
+    if (session.experience) bits.push(`experience: ${session.experience}`);
+  }
+  const base =
+    bits.length > 0 ? `Tonight's session — ${bits.join(', ')}.` : 'No session details were given.';
+  const journalBit = journal && journal.trim() !== '' ? ` ${journal.trim()}` : '';
+  return `${base}${journalBit}`;
 }
 
 export default async function handler(req: ReqLike, res: ResLike): Promise<void> {
@@ -123,7 +128,7 @@ export default async function handler(req: ReqLike, res: ResLike): Promise<void>
     }
 
     const contents: GeminiContent[] = [
-      { role: 'user', parts: [{ text: sessionLine(body.session) }] },
+      { role: 'user', parts: [{ text: sessionLine(body.session, body.journal) }] },
       ...messages.map((m): GeminiContent => ({
         role: m.role === 'bud' ? 'model' : 'user',
         parts: [{ text: m.text }],

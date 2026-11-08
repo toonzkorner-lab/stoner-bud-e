@@ -12,6 +12,15 @@ import {
   pickRandom,
 } from './bude';
 import type { ChatMessage, Experience, Method, Session } from './bude';
+import StrainsTab from './StrainsTab';
+import JournalTab from './JournalTab';
+import StashTab from './StashTab';
+import BreakTab from './BreakTab';
+import DoseTab from './DoseTab';
+import { JOURNAL_KEY, journalSummary } from './journal';
+import type { JournalEntry } from './journal';
+import { STASH_KEY } from './stash';
+import type { StashItem } from './stash';
 
 const TRANSCRIPT_KEY = 'bude-transcript-v1';
 const SESSION_KEY = 'bude-session-v1';
@@ -36,7 +45,7 @@ function apiUrl(): string {
   return '/api/chat';
 }
 
-type Tab = 'chat' | 'tools' | 'plan';
+type Tab = 'chat' | 'tools' | 'plan' | 'strains' | 'journal' | 'stash' | 'break' | 'dose';
 type Source = 'live' | 'fallback' | null;
 
 interface Vibe {
@@ -93,6 +102,9 @@ export default function App() {
   const [session, setSession] = useState<Session>(() => load(SESSION_KEY, DEFAULT_SESSION));
   const [transcript, setTranscript] = useState<ChatMessage[]>(() => loadList(TRANSCRIPT_KEY));
   const [vibe, setVibe] = useState<Vibe>(() => load(VIBE_KEY, DEFAULT_VIBE));
+  const [journal, setJournal] = useState<JournalEntry[]>(() => loadList(JOURNAL_KEY));
+  const [stash, setStash] = useState<StashItem[]>(() => loadList(STASH_KEY));
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [source, setSource] = useState<Source>(null);
   const [timerStatus, setTimerStatus] = useState('No timer running yet.');
   const [isOnline, setIsOnline] = useState(
@@ -113,6 +125,23 @@ export default function App() {
   useEffect(() => save(SESSION_KEY, session), [session]);
   useEffect(() => save(TRANSCRIPT_KEY, transcript), [transcript]);
   useEffect(() => save(VIBE_KEY, vibe), [vibe]);
+  useEffect(() => save(JOURNAL_KEY, journal), [journal]);
+  useEffect(() => save(STASH_KEY, stash), [stash]);
+
+  function deductFromStash(stashId: string, amount: number, unit: 'mg' | 'g'): void {
+    setStash((items) =>
+      items.map((i) =>
+        i.id === stashId && i.unit === unit
+          ? { ...i, amount: Math.max(0, Math.round((i.amount - amount) * 100) / 100) }
+          : i,
+      ),
+    );
+  }
+
+  function askAboutStrain(name: string): void {
+    setPendingQuestion(`Tell me about ${name} — what kind of high is it, and what should I know?`);
+    setTab('chat');
+  }
 
   return (
     <div className="app">
@@ -139,7 +168,22 @@ export default function App() {
           🧰 Tools
         </button>
         <button className={tab === 'plan' ? 'tab active' : 'tab'} onClick={() => setTab('plan')}>
-          📋 My Plan
+          📋 Plan
+        </button>
+        <button className={tab === 'strains' ? 'tab active' : 'tab'} onClick={() => setTab('strains')}>
+          🌿 Strains
+        </button>
+        <button className={tab === 'journal' ? 'tab active' : 'tab'} onClick={() => setTab('journal')}>
+          📓 Journal
+        </button>
+        <button className={tab === 'stash' ? 'tab active' : 'tab'} onClick={() => setTab('stash')}>
+          🎒 Stash
+        </button>
+        <button className={tab === 'break' ? 'tab active' : 'tab'} onClick={() => setTab('break')}>
+          ⏸️ Break
+        </button>
+        <button className={tab === 'dose' ? 'tab active' : 'tab'} onClick={() => setTab('dose')}>
+          ⚖️ Dose
         </button>
       </nav>
 
@@ -150,12 +194,30 @@ export default function App() {
           transcript={transcript}
           setTranscript={setTranscript}
           setSource={setSource}
+          journalNote={journalSummary(journal)}
+          prefill={pendingQuestion}
+          onPrefillUsed={() => setPendingQuestion(null)}
         />
       )}
       {tab === 'tools' && (
         <ToolsTab session={session} vibe={vibe} setVibe={setVibe} setTimerStatus={setTimerStatus} />
       )}
       {tab === 'plan' && <PlanTab session={session} vibe={vibe} timerStatus={timerStatus} />}
+      {tab === 'strains' && <StrainsTab onAskAbout={askAboutStrain} />}
+      {tab === 'journal' && (
+        <JournalTab
+          key={`${session.method}-${session.amount}-${session.timeTaken}`}
+          entries={journal}
+          onAdd={(e) => setJournal((j) => [e, ...j])}
+          onDelete={(id) => setJournal((j) => j.filter((e) => e.id !== id))}
+          session={session}
+          stash={stash}
+          onDeduct={deductFromStash}
+        />
+      )}
+      {tab === 'stash' && <StashTab items={stash} onChange={setStash} />}
+      {tab === 'break' && <BreakTab />}
+      {tab === 'dose' && <DoseTab />}
 
       <footer className="footer">
         21+ only. Bud-E is a buddy, not a doctor. Start low, go slow. Never drive high.
@@ -258,12 +320,18 @@ function ChatTab({
   transcript,
   setTranscript,
   setSource,
+  journalNote,
+  prefill,
+  onPrefillUsed,
 }: {
   session: Session;
   setSession: (s: Session) => void;
   transcript: ChatMessage[];
   setTranscript: (t: ChatMessage[]) => void;
   setSource: (s: Source) => void;
+  journalNote: string;
+  prefill: string | null;
+  onPrefillUsed: () => void;
 }) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -272,6 +340,14 @@ function ChatTab({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [transcript]);
+
+  // "Ask Bud-E about this strain" drops the question into the chat box.
+  useEffect(() => {
+    if (prefill !== null) {
+      setInput(prefill);
+      onPrefillUsed();
+    }
+  }, [prefill, onPrefillUsed]);
 
   async function send() {
     const text = input.trim();
@@ -284,7 +360,11 @@ function ChatTab({
       const res = await fetch(apiUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: next.slice(-12), session }),
+        body: JSON.stringify({
+          messages: next.slice(-12),
+          session,
+          ...(journalNote !== '' ? { journal: journalNote } : {}),
+        }),
       });
       const data: unknown = await res.json();
       const reply =
